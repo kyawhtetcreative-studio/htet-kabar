@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101522"><title>HTET KABAR — Digital Services</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="nav"><a class="brand" href="#home"><span class="brand-mark">HK</span><span>HTET <b>KABAR</b><small>Digital services, made simple.</small></span></a>
+      <nav><a href="#services">Services</a><a href="#how">How it works</a><button class="admin-toggle" id="adminToggle">Admin Preview</button></nav>
+    </header>
+    <main id="customerView">
+      <section class="hero" id="home"><div class="hero-copy"><div class="eyebrow"><i></i> DIGITAL SERVICE HUB</div><h1>Make your ideas<br><span>happen online.</span></h1><p>Creative, digital and technology services — in one place. Choose a service and let’s get your project moving.</p><a class="cta" href="#services">Explore Services <span>↗</span></a><div class="hero-note"><span class="note-dot"></span> Clear process · Personal support · Quality delivery</div></div><div class="hero-art"><div class="orb orb1"></div><div class="orb orb2"></div><div class="orbit"></div><div class="floating-card card-a"><span>✦ CREATIVE STUDIO</span><strong>Ideas into<br>digital reality.</strong></div><div class="floating-card card-b"><span class="green-dot"></span> Your project workspace <b>↗</b></div><div class="hero-symbol">HK<span>+</span></div></div></section>
+      <section class="service-section" id="services"><div class="section-heading"><div><div class="eyebrow">WHAT WE DO</div><h2>Services for your next move.</h2></div><p>Browse services, select what you need,<br>and submit your request.</p></div><div class="service-grid" id="serviceGrid"></div></section>
+      <section class="how" id="how"><div class="eyebrow">SIMPLE WORKFLOW</div><h2>From request to delivery.</h2><div class="steps"><div><span>01</span><h3>Choose a service</h3><p>Find the service that fits your project.</p></div><div><span>02</span><h3>Send your details</h3><p>Share your brief and requirements.</p></div><div><span>03</span><h3>Review & confirm</h3><p>We review your request and confirm next steps.</p></div><div><span>04</span><h3>Get your delivery</h3><p>Track updates and receive your work.</p></div></div></section>
+    </main>
+    <main id="adminView" class="hidden"><section class="admin-head"><div class="eyebrow">CONTROL CENTER / PREVIEW</div><h1>Admin Dashboard</h1><p>This is a front-end preview. Authentication, database and live order data are not connected yet.</p></section><div class="stat-grid"><div class="stat"><small>TOTAL SERVICES</small><strong>08</strong><span>Service catalog</span></div><div class="stat"><small>ORDERS</small><strong>—</strong><span>Awaiting database</span></div><div class="stat"><small>REVENUE</small><strong>—</strong><span>Awaiting payment data</span></div><div class="stat"><small>ACTIVE USERS</small><strong>—</strong><span>Awaiting authentication</span></div></div><div class="admin-panel"><h3>Service catalog</h3><div id="adminServices"></div></div></main>
+    <footer><div class="brand"><span class="brand-mark">HK</span><span>HTET <b>KABAR</b><small>Digital services, made simple.</small></span></div><span>© <span id="year"></span> HTET KABAR. MVP Preview.</span></footer>
+  </div><script src="/app.js"></script>
+</body></html>
