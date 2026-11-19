@@ -1,8 +1,9 @@
 {
   "name": "htet-kabar-mvp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "HTET KABAR service platform starter",
+  "description": "HTET KABAR Burmese digital service platform",
   "scripts": {"start": "node server.js", "dev": "node server.js"},
-  "engines": {"node": ">=18"}
+  "engines": {"node": ">=18"},
+  "dependencies": {"bcryptjs": "^2.4.3", "express": "^4.21.2", "jsonwebtoken": "^9.0.2", "pg": "^8.13.1"}
 }
