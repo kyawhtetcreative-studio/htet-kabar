@@ -1,0 +1,14 @@
+{
+  "name": "HTET KABAR Digital Services",
+  "short_name": "HTET KABAR",
+  "description": "Myanmar digital services and creative support",
+  "lang": "my",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#101522",
+  "theme_color": "#101522",
+  "icons": [
+    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}
