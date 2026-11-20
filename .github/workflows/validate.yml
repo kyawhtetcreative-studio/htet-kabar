@@ -14,8 +14,3 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run check
-      - uses: actions/upload-artifact@v4
-        with:
-          name: generated-package-lock
-          path: package-lock.json
-          retention-days: 1
