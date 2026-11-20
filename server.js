@@ -55,7 +55,7 @@ app.get('/auth/google/start',customerAuthLimit,(req,res)=>{
 });
 app.get('/auth/google/callback',customerAuthLimit,async(req,res)=>{
  const state=String(req.query.state||''),saved=req.cookies.hk_oauth_state||'',code=String(req.query.code||'');
- res.setHeader('Set-Cookie',`hk_oauth_state=; ${cookieOpts(0)}`);
+ const cookieHeaders=[`hk_oauth_state=; ${cookieOpts(0)}`];
  if(!state||!saved||state!==saved||!code)return res.redirect('/?login=failed');
  try{
   const tokenResponse=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:process.env.GOOGLE_CLIENT_ID,client_secret:process.env.GOOGLE_CLIENT_SECRET,redirect_uri:process.env.GOOGLE_REDIRECT_URI,grant_type:'authorization_code'})});
@@ -67,7 +67,7 @@ app.get('/auth/google/callback',customerAuthLimit,async(req,res)=>{
   if(!profile.sub||!profile.email||profile.email_verified!==true)return res.redirect('/?login=failed');
   const customer=(await pool.query('INSERT INTO customers(provider,provider_id,email,name,avatar_url) VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider,provider_id) DO UPDATE SET email=EXCLUDED.email,name=EXCLUDED.name,avatar_url=EXCLUDED.avatar_url,last_login_at=now() RETURNING id,provider,email,name,avatar_url',[ 'google',String(profile.sub),String(profile.email).toLowerCase(),String(profile.name||''),String(profile.picture||'')])).rows[0];
   const token=jwt.sign({customerId:customer.id,provider:customer.provider,email:customer.email},SECRET,{expiresIn:'7d'});
-  res.setHeader('Set-Cookie',`hk_customer=${encodeURIComponent(token)}; ${cookieOpts(604800)}`);
+  cookieHeaders.push(`hk_customer=${encodeURIComponent(token)}; ${cookieOpts(604800)}`);res.setHeader('Set-Cookie',cookieHeaders);
   res.redirect('/?login=success');
  }catch(e){res.redirect('/?login=failed');}
 });
