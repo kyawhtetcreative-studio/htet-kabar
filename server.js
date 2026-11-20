@@ -57,9 +57,10 @@ async function ensureOrderTables(){
  CREATE TABLE IF NOT EXISTS payments(
  id SERIAL PRIMARY KEY, order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
  method TEXT NOT NULL, reference TEXT NOT NULL, amount NUMERIC(12,2) NOT NULL,
- paid_date DATE, paid_time TIME, status TEXT NOT NULL DEFAULT 'pending', admin_note TEXT, submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(), reviewed_at TIMESTAMPTZ);
+ paid_date DATE, paid_time TIME, reference_last6 TEXT, status TEXT NOT NULL DEFAULT 'pending', admin_note TEXT, submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(), reviewed_at TIMESTAMPTZ);
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_date DATE;
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_time TIME;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS reference_last6 TEXT;
 `);
 }
 function validText(v,max){return typeof v==='string'&&v.trim().length>0&&v.trim().length<=max;}
@@ -80,8 +81,8 @@ app.post('/api/orders',rateLimit({windowMs:60*60*1000,limit:8,standardHeaders:tr
  }catch(e){res.status(500).json({error:'Order သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});}
 });
 app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,standardHeaders:true,legacyHeaders:false}),sameOrigin,async(req,res)=>{
- const b=req.body||{};if(!validText(b.phone,40)||!validText(b.method,80)||!validText(b.reference,160)||!validText(b.paidDate,10)||!validText(b.paidTime,5)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(b.paidDate)||!/^[0-9]{2}:[0-9]{2}$/.test(b.paidTime))return res.status(400).json({error:'ဖုန်း၊ Payment Method၊ ငွေလွှဲသည့် ရက်စွဲ/အချိန်နှင့် Transaction Reference မှန်ကန်စွာဖြည့်ပါ။'});
- try{const order=(await pool.query('SELECT * FROM orders WHERE order_code=$1 AND phone=$2',[req.params.code,b.phone.trim()])).rows[0];if(!order)return res.status(404).json({error:'Order မတွေ့ပါ။'});if(order.payment_status==='paid')return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});await pool.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time) VALUES($1,$2,$3,$4,$5,$6)',[order.id,b.method.trim(),b.reference.trim(),order.price,b.paidDate,b.paidTime]);await pool.query("UPDATE orders SET payment_status='submitted',updated_at=now() WHERE id=$1",[order.id]);res.status(201).json({message:'Payment တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီး အတည်ပြုပါမည်။'});}catch{res.status(500).json({error:'Payment တင်ပြမှု မအောင်မြင်ပါ။'});}
+ const b=req.body||{};if(!validText(b.phone,40)||!validText(b.method,80)||!validText(b.reference,160)||!validText(b.referenceLast6,6)||!/^[0-9]{6}$/.test(b.referenceLast6)||!validText(b.paidDate,10)||!validText(b.paidTime,5)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(b.paidDate)||!/^[0-9]{2}:[0-9]{2}$/.test(b.paidTime))return res.status(400).json({error:'ဖုန်း၊ Payment Method၊ ငွေလွှဲသည့် ရက်စွဲ/အချိန်နှင့် Transaction Reference မှန်ကန်စွာဖြည့်ပါ။'});
+ try{const order=(await pool.query('SELECT * FROM orders WHERE order_code=$1 AND phone=$2',[req.params.code,b.phone.trim()])).rows[0];if(!order)return res.status(404).json({error:'Order မတွေ့ပါ။'});if(order.payment_status==='paid')return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});await pool.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time,reference_last6) VALUES($1,$2,$3,$4,$5,$6,$7)',[order.id,b.method.trim(),b.reference.trim(),order.price,b.paidDate,b.paidTime,b.referenceLast6]);await pool.query("UPDATE orders SET payment_status='submitted',updated_at=now() WHERE id=$1",[order.id]);res.status(201).json({message:'Payment တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီး အတည်ပြုပါမည်။'});}catch{res.status(500).json({error:'Payment တင်ပြမှု မအောင်မြင်ပါ။'});}
 });
 app.get('/api/orders/:code',async(req,res)=>{const phone=String(req.query.phone||'').trim();if(!phone)return res.status(400).json({error:'Order စစ်ရန် ဖုန်းနံပါတ်လိုအပ်ပါသည်။'});try{const r=await pool.query('SELECT order_code,service_name,package_name,price,status,payment_status,created_at,updated_at FROM orders WHERE order_code=$1 AND phone=$2',[req.params.code,phone]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order စစ်ဆေး၍မရပါ။'});}});
 app.get('/api/admin/orders',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Order list ရယူ၍မရပါ။'});}});
