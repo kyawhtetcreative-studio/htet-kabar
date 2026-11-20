@@ -30,7 +30,8 @@ async function initialize(){
  if(!SECRET||SECRET.length<32)throw Error('JWT_SECRET must be set and at least 32 characters');
  await pool.query(`CREATE TABLE IF NOT EXISTS admins(id SERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS services(id SERIAL PRIMARY KEY,name TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,icon TEXT DEFAULT '✦',description TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT true,packages JSONB NOT NULL DEFAULT '[]',created_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
+ CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,provider TEXT NOT NULL,provider_id TEXT NOT NULL,email TEXT,name TEXT,avatar_url TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),last_login_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(provider,provider_id));`);
  const n=Number((await pool.query('SELECT COUNT(*) FROM services')).rows[0].count);
  if(!n)for(const s of seed)await pool.query('INSERT INTO services(name,slug,icon,description,packages) VALUES($1,$2,$3,$4,$5)',[s.name,s.slug,s.icon,s.description,JSON.stringify(s.packages)]);
  if(process.env.ADMIN_EMAIL&&process.env.ADMIN_PASSWORD){const hash=await bcrypt.hash(process.env.ADMIN_PASSWORD,12);await pool.query('INSERT INTO admins(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING',[process.env.ADMIN_EMAIL.toLowerCase(),hash]);}
@@ -41,6 +42,39 @@ app.put('/api/admin/site-settings',requireAdmin,sameOrigin,async(req,res)=>{cons
 function requireAdmin(req,res,next){const token=req.cookies.hk_admin;if(!token)return res.status(401).json({error:'Admin login ဝင်ရန်လိုအပ်ပါသည်။'});try{req.admin=jwt.verify(token,SECRET);next();}catch{return res.status(401).json({error:'Login session သက်တမ်းကုန်ပါပြီ။'});}}
 function sameOrigin(req,res,next){const origin=req.get('origin');if(!origin)return res.status(403).json({error:'Origin header လိုအပ်ပါသည်။'});const host=req.get('host');try{if(new URL(origin).host!==host)return res.status(403).json({error:'Cross-origin request ပိတ်ထားပါသည်။'});}catch{return res.status(403).json({error:'Origin မမှန်ပါ။'});}next();}
 function publicService(s){return {...s,packages:typeof s.packages==='string'?JSON.parse(s.packages):s.packages};}
+
+// Customer Google OAuth (credentials are supplied only through deployment environment variables)
+const customerAuthLimit=rateLimit({windowMs:15*60*1000,limit:20,standardHeaders:true,legacyHeaders:false});
+function cookieOpts(maxAge){return `HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.NODE_ENV==='production'?'; Secure':''}`;}
+app.get('/auth/google/start',customerAuthLimit,(req,res)=>{
+ if(!process.env.GOOGLE_CLIENT_ID||!process.env.GOOGLE_CLIENT_SECRET||!process.env.GOOGLE_REDIRECT_URI)return res.status(503).send('Google Login ကို Admin က OAuth Credentials ထည့်ပြီးမှ ဖွင့်နိုင်ပါမည်။');
+ const state=require('node:crypto').randomBytes(24).toString('hex');
+ res.setHeader('Set-Cookie',`hk_oauth_state=${state}; ${cookieOpts(600)}`);
+ const params=new URLSearchParams({client_id:process.env.GOOGLE_CLIENT_ID,redirect_uri:process.env.GOOGLE_REDIRECT_URI,response_type:'code',scope:'openid email profile',state,prompt:'select_account'});
+ res.redirect('https://accounts.google.com/o/oauth2/v2/auth?'+params.toString());
+});
+app.get('/auth/google/callback',customerAuthLimit,async(req,res)=>{
+ const state=String(req.query.state||''),saved=req.cookies.hk_oauth_state||'',code=String(req.query.code||'');
+ res.setHeader('Set-Cookie',`hk_oauth_state=; ${cookieOpts(0)}`);
+ if(!state||!saved||state!==saved||!code)return res.redirect('/?login=failed');
+ try{
+  const tokenResponse=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({code,client_id:process.env.GOOGLE_CLIENT_ID,client_secret:process.env.GOOGLE_CLIENT_SECRET,redirect_uri:process.env.GOOGLE_REDIRECT_URI,grant_type:'authorization_code'})});
+  if(!tokenResponse.ok)return res.redirect('/?login=failed');
+  const tokens=await tokenResponse.json();
+  const userResponse=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+tokens.access_token}});
+  if(!userResponse.ok)return res.redirect('/?login=failed');
+  const profile=await userResponse.json();
+  if(!profile.sub||!profile.email||profile.email_verified!==true)return res.redirect('/?login=failed');
+  const customer=(await pool.query('INSERT INTO customers(provider,provider_id,email,name,avatar_url) VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider,provider_id) DO UPDATE SET email=EXCLUDED.email,name=EXCLUDED.name,avatar_url=EXCLUDED.avatar_url,last_login_at=now() RETURNING id,provider,email,name,avatar_url',[ 'google',String(profile.sub),String(profile.email).toLowerCase(),String(profile.name||''),String(profile.picture||'')])).rows[0];
+  const token=jwt.sign({customerId:customer.id,provider:customer.provider,email:customer.email},SECRET,{expiresIn:'7d'});
+  res.setHeader('Set-Cookie',`hk_customer=${encodeURIComponent(token)}; ${cookieOpts(604800)}`);
+  res.redirect('/?login=success');
+ }catch(e){res.redirect('/?login=failed');}
+});
+function requireCustomer(req,res,next){const token=req.cookies.hk_customer;if(!token)return res.status(401).json({error:'Customer login ဝင်ရန်လိုအပ်ပါသည်။'});try{req.customer=jwt.verify(token,SECRET);next();}catch{return res.status(401).json({error:'Customer session သက်တမ်းကုန်ပါပြီ။'});}}
+app.get('/api/customer/me',requireCustomer,async(req,res)=>{try{const c=(await pool.query('SELECT id,provider,email,name,avatar_url FROM customers WHERE id=$1',[req.customer.customerId])).rows[0];if(!c)return res.status(401).json({error:'Customer account မတွေ့ပါ။'});res.setHeader('Cache-Control','no-store');res.json(c);}catch{res.status(500).json({error:'Customer account ရယူမရပါ။'});}});
+app.post('/api/customer/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_customer=; ${cookieOpts(0)}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
+
 app.get('/api/health',(req,res)=>res.json({ok:true,app:'HTET KABAR',stage:'backend-foundation'}));
 app.get('/api/services',async(req,res)=>{try{const result=await pool.query('SELECT * FROM services WHERE active=true ORDER BY id');res.json(result.rows.map(publicService));}catch(e){res.status(500).json({error:'Service စာရင်းရယူ၍မရပါ။'});}});
 app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!email||!password)return res.status(400).json({error:'Email နှင့် Password ဖြည့်ပါ။'});const admin=(await pool.query('SELECT * FROM admins WHERE email=$1',[email])).rows[0];if(!admin||!(await bcrypt.compare(password,admin.password_hash)))return res.status(401).json({error:'Email သို့မဟုတ် Password မှားနေပါသည်။'});const token=jwt.sign({adminId:admin.id,email:admin.email},SECRET,{expiresIn:'8h'});res.setHeader('Set-Cookie',`hk_admin=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({ok:true,email:admin.email});}catch(e){res.status(500).json({error:'Login လုပ်၍မရပါ။'});}});
