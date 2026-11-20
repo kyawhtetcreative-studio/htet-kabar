@@ -55,3 +55,12 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 - Payment confirmation is manual: inspect the payment details in Admin and approve or reject; no automatic payment verification is claimed.
 - Before database maintenance or risky changes, take a PostgreSQL backup using your provider's backup facility or `pg_dump`, and verify you can restore it.
 - Deployment smoke test, live domain verification, database backup/restore rehearsal, and production security review are still pending.
+
+
+## Customer Google OAuth Login
+- Customer sign-in is implemented with Google OAuth authorization code flow; Google login remains disabled until the OAuth credentials are configured in Render.
+- Create a Google OAuth client in Google Cloud Console. Authorized redirect URI must exactly match `GOOGLE_REDIRECT_URI` (for production, e.g. `https://YOUR_DOMAIN/auth/google/callback`).
+- Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in Render Environment. Never commit these values.
+- OAuth state is stored in a short-lived HttpOnly cookie and checked at callback. Email must be verified by Google. Customer sessions use HttpOnly, SameSite=Lax cookies, and Secure in production. Customer accounts are stored in PostgreSQL by provider ID.
+- Customer endpoints: `GET /api/customer/me`, `POST /api/customer/logout`. Google login start: `/auth/google/start`.
+- Facebook login is not included in this milestone; it requires a separate Meta app and OAuth setup.
