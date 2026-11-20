@@ -64,11 +64,16 @@ function validText(v,max){return typeof v==='string'&&v.trim().length>0&&v.trim(
 app.post('/api/orders',rateLimit({windowMs:60*60*1000,limit:8,standardHeaders:true,legacyHeaders:false}),sameOrigin,async(req,res)=>{
  const b=req.body||{};if(!validText(b.customerName,120)||!validText(b.phone,40)||!validText(b.serviceName,160)||!validText(b.packageName,160)||!validText(b.brief,3000))return res.status(400).json({error:'အမည်၊ ဖုန်း၊ ဝန်ဆောင်မှု၊ package နှင့် လိုအပ်ချက်ကို ဖြည့်ပါ။'});
  try{
-  let service=null;if(b.serviceId){service=(await pool.query('SELECT * FROM services WHERE id=$1 AND active=true',[b.serviceId])).rows[0];}
-  const price=Number(b.price);if(!Number.isFinite(price)||price<0)return res.status(400).json({error:'ဈေးနှုန်းမမှန်ပါ။'});
-  if(service){const packages=typeof service.packages==='string'?JSON.parse(service.packages):service.packages;const pkg=packages.find(p=>p.name===b.packageName);if(!pkg)return res.status(400).json({error:'Package မတွေ့ပါ။'});}
+  if(!b.serviceId)return res.status(400).json({error:'Service ရွေးချယ်ပါ။'});
+  const service=(await pool.query('SELECT * FROM services WHERE id=$1 AND active=true',[b.serviceId])).rows[0];
+  if(!service)return res.status(400).json({error:'Service မတွေ့ပါ။'});
+  const packages=typeof service.packages==='string'?JSON.parse(service.packages):service.packages;
+  const pkg=packages.find(p=>p.name===b.packageName);
+  if(!pkg)return res.status(400).json({error:'Package မတွေ့ပါ။'});
+  const price=Number(pkg.price);if(!Number.isFinite(price)||price<0)return res.status(400).json({error:'Package ဈေးနှုန်းမမှန်ပါ။'});
+  const serviceName=service.name;
   const code='HK-'+require('node:crypto').randomBytes(4).toString('hex').toUpperCase();
-  const row=(await pool.query('INSERT INTO orders(order_code,customer_name,phone,contact,service_id,service_name,package_name,price,brief) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING order_code,created_at,status,payment_status',[code,b.customerName.trim(),b.phone.trim(),String(b.contact||'').slice(0,150),service?.id||null,b.serviceName.trim(),b.packageName.trim(),price,b.brief.trim()])).rows[0];
+  const row=(await pool.query('INSERT INTO orders(order_code,customer_name,phone,contact,service_id,service_name,package_name,price,brief) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING order_code,created_at,status,payment_status',[code,b.customerName.trim(),b.phone.trim(),String(b.contact||'').slice(0,150),service?.id||null,serviceName,b.packageName.trim(),price,b.brief.trim()])).rows[0];
   res.status(201).json({message:'Order တင်ပြီးပါပြီ။ Order Code ကို သိမ်းထားပါ။',...row});
  }catch(e){res.status(500).json({error:'Order သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});}
 });
