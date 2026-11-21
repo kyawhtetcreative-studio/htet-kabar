@@ -16,17 +16,21 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 3. Create a PostgreSQL database and set `DATABASE_URL`.
 4. Generate a `JWT_SECRET` with at least 32 characters.
 5. Set `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` before first startup. Admin creation is seeded once; changing these environment variables later does not automatically change an existing admin password.
-6. Run `npm install`, then `npm start`.
+6. Run `npm ci`, then `npm start`.
 7. Open `http://localhost:10000` (or the configured `PORT`). Admin control panel: `/admin`.
 
-## Render deployment (manual)
-- Create a Node Web Service from this repository (not a Static Site).
-- Build command: `npm install`
-- Start command: `npm start`
-- Attach a PostgreSQL database and set `DATABASE_URL` to its connection string.
-- Set `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `NODE_ENV=production` in the service's Environment settings.
+## Render deployment (Blueprint recommended)
+- A root `render.yaml` now defines a Node web service and PostgreSQL database in Singapore, connected with Render's database reference.
+- Build command: `npm ci`; start command: `npm start`; health check: `/api/health`.
+- The Blueprint generates `JWT_SECRET` and prompts for `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Use a strong admin password with at least 12 characters. Never commit secrets.
+- Automatic deploys are disabled in the Blueprint; deploy from the Render Dashboard after reviewing changes.
+- To deploy: Render Dashboard → **New → Blueprint** → connect this repo and `main` → review the resources and environment values → **Deploy Blueprint**.
+- This Blueprint uses Free plans for a demo/testing setup. Render Free Postgres expires after 30 days and has no backups; do not store production customer/order/payment data there. For production, select a paid database plan and set up/verify backups before launch.
+- The Blueprint does not confirm that a service is already deployed or provide a live URL until the user deploys it.
+
+Manual alternative:
+- Create a Node Web Service (not a Static Site), build command `npm ci`, start command `npm start`, attach PostgreSQL, and set the same environment variables.
 - Use HTTPS in production. Never commit secrets or put credentials in screenshots.
-- The repo does not contain a Render Blueprint or verified live deployment URL yet. Deploy/configure from the Render dashboard manually; do not assume a service name or domain.
 
 ## Admin
 - Admin URL: `/admin`
@@ -48,7 +52,7 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 
 ## Validation
 - `npm run check` runs syntax checks for `server.js` and `public/app.js`.
-- GitHub Actions runs `npm install` and `npm run check` on pushes and pull requests to `main`. The previous lockfile was incomplete and has been removed; regenerate a full lockfile after dependency resolution before switching back to `npm ci` for reproducible installs.
+- GitHub Actions runs `npm ci` and `npm run check` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
 - Syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
 
 ## Operations / backup
