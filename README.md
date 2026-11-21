@@ -61,7 +61,7 @@ Manual alternative:
 - Deployment smoke test, live domain verification, database backup/restore rehearsal, and production security review are still pending.
 
 ## Supabase setup
-1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`. This migration only creates missing tables and indexes; it does not delete or truncate orders, payments, customers, or services.
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, then `database/migrations/002_payment_integrity.sql`. These migrations only create missing tables and indexes; they do not delete or truncate orders, payments, customers, or services. The payment migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
 4. Set `NODE_ENV=production`.

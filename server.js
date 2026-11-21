@@ -130,13 +130,44 @@ app.post('/api/orders',rateLimit({windowMs:60*60*1000,limit:8,standardHeaders:tr
 });
 app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,standardHeaders:true,legacyHeaders:false}),sameOrigin,async(req,res)=>{
  const b=req.body||{};if(!validText(b.phone,40)||!validText(b.method,80)||(typeof b.reference!=='string'||b.reference.length>160)||!validText(b.referenceLast6,6)||!/^[0-9]{6}$/.test(b.referenceLast6)||!validText(b.paidDate,10)||!validText(b.paidTime,5)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(b.paidDate)||!/^[0-9]{2}:[0-9]{2}$/.test(b.paidTime))return res.status(400).json({error:'ဖုန်း၊ Payment Method၊ ငွေလွှဲသည့် ရက်စွဲ/အချိန်နှင့် Transaction Reference မှန်ကန်စွာဖြည့်ပါ။'});
- try{const order=(await pool.query('SELECT * FROM orders WHERE order_code=$1 AND phone=$2',[req.params.code,b.phone.trim()])).rows[0];if(!order)return res.status(404).json({error:'Order မတွေ့ပါ။'});if(order.payment_status==='paid')return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});await pool.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time,reference_last6) VALUES($1,$2,$3,$4,$5,$6,$7)',[order.id,b.method.trim(),(b.reference||'').trim(),order.price,b.paidDate,b.paidTime,b.referenceLast6]);await pool.query("UPDATE orders SET payment_status='submitted',updated_at=now() WHERE id=$1",[order.id]);res.status(201).json({message:'Payment တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီး အတည်ပြုပါမည်။'});}catch{res.status(500).json({error:'Payment တင်ပြမှု မအောင်မြင်ပါ။'});}
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const order=(await client.query('SELECT * FROM orders WHERE order_code=$1 AND phone=$2 FOR UPDATE',[req.params.code,b.phone.trim()])).rows[0];
+  if(!order){await client.query('ROLLBACK');return res.status(404).json({error:'Order မတွေ့ပါ။'});}
+  if(order.payment_status==='paid'){await client.query('ROLLBACK');return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});}
+  const pending=(await client.query("SELECT id FROM payments WHERE order_id=$1 AND status='pending' LIMIT 1",[order.id])).rows[0];
+  if(pending){await client.query('ROLLBACK');return res.status(409).json({error:'Payment တင်ပြပြီး Admin စစ်ဆေးနေဆဲဖြစ်ပါသည်။'});}
+  await client.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time,reference_last6) VALUES($1,$2,$3,$4,$5,$6,$7)',[order.id,b.method.trim(),(b.reference||'').trim(),order.price,b.paidDate,b.paidTime,b.referenceLast6]);
+  await client.query("UPDATE orders SET payment_status='submitted',updated_at=now() WHERE id=$1",[order.id]);
+  await client.query('COMMIT');
+  res.status(201).json({message:'Payment တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီး အတည်ပြုပါမည်။'});
+ }catch(e){
+  await client.query('ROLLBACK');
+  res.status(500).json({error:'Payment တင်ပြမှု မအောင်မြင်ပါ။'});
+ }finally{client.release();}
 });
 app.get('/api/orders/:code',orderTrackLimit,async(req,res)=>{const code=String(req.params.code||'').trim().toUpperCase(),phone=String(req.query.phone||'').trim();if(!/^HK-[A-F0-9]{8}$/.test(code))return res.status(400).json({error:'Order Code ပုံစံမမှန်ပါ။'});if(!validText(phone,40))return res.status(400).json({error:'Order စစ်ရန် ဖုန်းနံပါတ်လိုအပ်ပါသည်။'});try{const r=await pool.query('SELECT order_code,service_name,package_name,price,status,payment_status,created_at,updated_at FROM orders WHERE order_code=$1 AND phone=$2',[code,phone]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order စစ်ဆေး၍မရပါ။'});}});
 app.get('/api/admin/orders',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Order list ရယူ၍မရပါ။'});}});
 app.get('/api/admin/payments',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT p.*,o.order_code,o.customer_name,o.phone FROM payments p JOIN orders o ON o.id=p.order_id ORDER BY p.submitted_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Payment list ရယူ၍မရပါ။'});}});
 app.patch('/api/admin/orders/:id/status',requireAdmin,sameOrigin,async(req,res)=>{const allowed=['pending','reviewing','approved','rejected','completed'];if(!allowed.includes(req.body.status))return res.status(400).json({error:'Status မမှန်ပါ။'});try{const r=await pool.query('UPDATE orders SET status=$1,updated_at=now() WHERE id=$2 RETURNING *',[req.body.status,req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order status ပြင်ဆင်၍မရပါ။'});}});
-app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res)=>{if(!['approved','rejected'].includes(req.body.status))return res.status(400).json({error:'Payment review status မမှန်ပါ။'});try{const result=await pool.query('UPDATE payments SET status=$1,admin_note=$2,reviewed_at=now() WHERE id=$3 RETURNING *',[req.body.status,String(req.body.note||'').slice(0,500),req.params.id]);if(!result.rows[0])return res.status(404).json({error:'Payment မတွေ့ပါ။'});if(req.body.status==='approved')await pool.query("UPDATE orders SET payment_status='paid',updated_at=now() WHERE id=$1",[result.rows[0].order_id]);else await pool.query("UPDATE orders SET payment_status='rejected',updated_at=now() WHERE id=$1",[result.rows[0].order_id]);res.json(result.rows[0]);}catch{res.status(500).json({error:'Payment review မအောင်မြင်ပါ။'});}});
+app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res)=>{
+ if(!['approved','rejected'].includes(req.body.status))return res.status(400).json({error:'Payment review status မမှန်ပါ။'});
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const payment=(await client.query('SELECT * FROM payments WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!payment){await client.query('ROLLBACK');return res.status(404).json({error:'Payment မတွေ့ပါ။'});}
+  if(payment.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'Payment ကို အကြိမ်တစ်ကြိမ်သာ စစ်ဆေးနိုင်ပါသည်။'});}
+  const result=(await client.query('UPDATE payments SET status=$1,admin_note=$2,reviewed_at=now() WHERE id=$3 AND status=\'pending\' RETURNING *',[req.body.status,String(req.body.note||'').slice(0,500),req.params.id])).rows[0];
+  await client.query("UPDATE orders SET payment_status=$1,updated_at=now() WHERE id=$2",[req.body.status==='approved'?'paid':'rejected',payment.order_id]);
+  await client.query('COMMIT');
+  res.json(result);
+ }catch{
+  await client.query('ROLLBACK');
+  res.status(500).json({error:'Payment review မအောင်မြင်ပါ။'});
+ }finally{client.release();}
+});
 
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 if(!process.env.DATABASE_URL||!SECRET||SECRET.length<32){console.error('Startup failed: DATABASE_URL and JWT_SECRET must be configured.');process.exit(1);}else{initialize().then(()=>ensureOrderTables()).then(()=>app.listen(PORT,()=>console.log('HTET KABAR API listening on '+PORT))).catch(e=>{console.error('Startup failed:',e.message);process.exit(1);});}
