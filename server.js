@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express=require('express');
 const path=require('node:path');
 const bcrypt=require('bcryptjs');
@@ -9,7 +11,13 @@ const {rateLimit}=require('express-rate-limit');
 const app=express();
 const PORT=Number(process.env.PORT||3000);
 const SECRET=process.env.JWT_SECRET;
-const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?.includes('neon.tech')||process.env.DATABASE_URL?.includes('render.com')?{rejectUnauthorized:false}:undefined});
+function databaseSslOptions(databaseUrl){
+ if(!databaseUrl)return undefined;
+ const url=databaseUrl.toLowerCase();
+ const requiresSsl=url.includes('sslmode=require')||url.includes('sslmode=no-verify')||url.includes('supabase.co')||url.includes('neon.tech')||url.includes('render.com');
+ return requiresSsl?{rejectUnauthorized:false}:undefined;
+}
+const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:databaseSslOptions(process.env.DATABASE_URL)});
 app.use(helmet({contentSecurityPolicy:false}));
 app.use(express.json({limit:'2mb'}));
 app.use(express.static(path.join(__dirname,'public')));
@@ -28,6 +36,7 @@ const seed=[
 async function initialize(){
  if(!process.env.DATABASE_URL)throw Error('DATABASE_URL environment variable is required');
  if(!SECRET||SECRET.length<32)throw Error('JWT_SECRET must be set and at least 32 characters');
+ if(process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length<12)throw Error('ADMIN_PASSWORD must be at least 12 characters');
  await pool.query(`CREATE TABLE IF NOT EXISTS admins(id SERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS services(id SERIAL PRIMARY KEY,name TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,icon TEXT DEFAULT '✦',description TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT true,packages JSONB NOT NULL DEFAULT '[]',created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -75,9 +84,9 @@ function requireCustomer(req,res,next){const token=req.cookies.hk_customer;if(!t
 app.get('/api/customer/me',requireCustomer,async(req,res)=>{try{const c=(await pool.query('SELECT id,provider,email,name,avatar_url FROM customers WHERE id=$1',[req.customer.customerId])).rows[0];if(!c)return res.status(401).json({error:'Customer account မတွေ့ပါ။'});res.setHeader('Cache-Control','no-store');res.json(c);}catch{res.status(500).json({error:'Customer account ရယူမရပါ။'});}});
 app.post('/api/customer/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_customer=; ${cookieOpts(0)}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 
-app.get('/api/health',(req,res)=>res.json({ok:true,app:'HTET KABAR',stage:'backend-foundation'}));
+app.get('/api/health',(req,res)=>res.json({ok:true,app:'HTET KABAR',stage:'backend-foundation',database:'connected'}));
 app.get('/api/services',async(req,res)=>{try{const result=await pool.query('SELECT * FROM services WHERE active=true ORDER BY id');res.json(result.rows.map(publicService));}catch(e){res.status(500).json({error:'Service စာရင်းရယူ၍မရပါ။'});}});
-app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!email||!password)return res.status(400).json({error:'Email နှင့် Password ဖြည့်ပါ။'});const admin=(await pool.query('SELECT * FROM admins WHERE email=$1',[email])).rows[0];if(!admin||!(await bcrypt.compare(password,admin.password_hash)))return res.status(401).json({error:'Email သို့မဟုတ် Password မှားနေပါသည်။'});const token=jwt.sign({adminId:admin.id,email:admin.email},SECRET,{expiresIn:'8h'});res.setHeader('Set-Cookie',`hk_admin=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({ok:true,email:admin.email});}catch(e){res.status(500).json({error:'Login လုပ်၍မရပါ။'});}});
+app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!email||!password)return res.status(400).json({error:'Email နှင့် Password ဖြည့်ပါ။'});const admin=(await pool.query('SELECT * FROM admins WHERE lower(btrim(email))=$1',[email])).rows[0];if(!admin||!(await bcrypt.compare(password,admin.password_hash)))return res.status(401).json({error:'Email သို့မဟုတ် Password မှားနေပါသည်။'});const token=jwt.sign({adminId:admin.id,email:admin.email},SECRET,{expiresIn:'8h'});res.setHeader('Set-Cookie',`hk_admin=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({ok:true,email:admin.email});}catch(e){res.status(500).json({error:'Login လုပ်၍မရပါ။'});}});
 app.post('/api/admin/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV==='production'?'; Secure':''}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 app.get('/api/admin/me',requireAdmin,(req,res)=>res.json({ok:true,email:req.admin.email}));
 app.get('/api/admin/services',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM services ORDER BY id')).rows.map(publicService));}catch{res.status(500).json({error:'Admin service list မရပါ။'});}});
@@ -130,4 +139,4 @@ app.patch('/api/admin/orders/:id/status',requireAdmin,sameOrigin,async(req,res)=
 app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res)=>{if(!['approved','rejected'].includes(req.body.status))return res.status(400).json({error:'Payment review status မမှန်ပါ။'});try{const result=await pool.query('UPDATE payments SET status=$1,admin_note=$2,reviewed_at=now() WHERE id=$3 RETURNING *',[req.body.status,String(req.body.note||'').slice(0,500),req.params.id]);if(!result.rows[0])return res.status(404).json({error:'Payment မတွေ့ပါ။'});if(req.body.status==='approved')await pool.query("UPDATE orders SET payment_status='paid',updated_at=now() WHERE id=$1",[result.rows[0].order_id]);else await pool.query("UPDATE orders SET payment_status='rejected',updated_at=now() WHERE id=$1",[result.rows[0].order_id]);res.json(result.rows[0]);}catch{res.status(500).json({error:'Payment review မအောင်မြင်ပါ။'});}});
 
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
-if(!process.env.DATABASE_URL||!SECRET||SECRET.length<32){console.warn('Database/admin secret configuration missing. Starting static preview mode; API data features remain unavailable until DATABASE_URL and JWT_SECRET are configured.');app.listen(PORT,()=>console.log('HTET KABAR static preview listening on '+PORT));}else{initialize().then(()=>ensureOrderTables()).then(()=>app.listen(PORT,()=>console.log('HTET KABAR API listening on '+PORT))).catch(e=>{console.error('Startup failed:',e.message);process.exit(1);});}
+if(!process.env.DATABASE_URL||!SECRET||SECRET.length<32){console.error('Startup failed: DATABASE_URL and JWT_SECRET must be configured.');process.exit(1);}else{initialize().then(()=>ensureOrderTables()).then(()=>app.listen(PORT,()=>console.log('HTET KABAR API listening on '+PORT))).catch(e=>{console.error('Startup failed:',e.message);process.exit(1);});}

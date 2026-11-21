@@ -56,6 +56,22 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 - Before database maintenance or risky changes, take a PostgreSQL backup using your provider's backup facility or `pg_dump`, and verify you can restore it.
 - Deployment smoke test, live domain verification, database backup/restore rehearsal, and production security review are still pending.
 
+## Supabase setup
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`. This migration only creates missing tables and indexes; it does not delete or truncate orders, payments, customers, or services.
+2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
+3. Set a random `JWT_SECRET` with at least 32 characters.
+4. Set `NODE_ENV=production`.
+5. Restart the Node service after the environment values are saved.
+
+## Admin account setup/reset
+The server does not contain a default password and never prints one.
+
+- Initial setup: set `ADMIN_EMAIL` and a strong `ADMIN_PASSWORD` locally or in the deployment shell, then run `npm run admin:setup`.
+- Password reset: set `ADMIN_EMAIL` and the replacement `ADMIN_PASSWORD`, then run `npm run admin:reset`.
+- `setup` creates the account only when it does not already exist. `reset` changes only that account's password hash.
+- A password must contain at least 12 characters. Keep `ADMIN_PASSWORD` in environment/secrets, not in source files or SQL.
+- Existing startup seeding creates an account only when `ADMIN_EMAIL` and `ADMIN_PASSWORD` are configured; it does not reset an existing account.
+
 
 ## Customer Google OAuth Login
 - Customer sign-in is implemented with Google OAuth authorization code flow; Google login remains disabled until the OAuth credentials are configured in Render.
