@@ -51,8 +51,9 @@ Manual alternative:
 - Admin orders/payments/settings: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`, `GET/PUT /api/admin/site-settings`
 
 ## Validation
-- `npm run check` runs syntax checks for `server.js` and `public/app.js`.
-- GitHub Actions runs `npm ci` and `npm run check` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
+- `npm run check` runs syntax checks for `server.js`, `public/app.js`, and `scripts/admin-account.js`.
+- `npm test` runs the Node built-in test suite in `test/`.
+- GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
 - Syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
 
 ## Operations / backup
