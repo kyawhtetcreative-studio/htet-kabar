@@ -38,6 +38,7 @@ Manual alternative:
 - Admin endpoints require a valid HttpOnly cookie.
 - Admin mutation and order/payment submission endpoints check same-origin requests.
 - Customer tracking is rate-limited (20 attempts per IP per 15 minutes) and validates order code format before database lookup.
+- Express trusts one reverse-proxy hop by default in production; set `TRUST_PROXY_HOPS` to a non-negative integer (0–10) only when the deployment topology requires a different value.
 - Keep admin access private; logout when finished.
 
 ## API summary
@@ -52,7 +53,9 @@ Manual alternative:
 
 ## Validation
 - `npm run check` runs syntax checks for `server.js` and `public/app.js`.
-- GitHub Actions runs `npm ci` and `npm run check` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
+- `npm test` covers database health response behavior and proxy-hop configuration, plus the existing admin-account tests.
+- GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
+- `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
 - Syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
 
 ## Operations / backup
