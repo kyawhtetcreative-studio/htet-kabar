@@ -9,6 +9,7 @@ const helmet=require('helmet');
 const {rateLimit}=require('express-rate-limit');
 const {checkDatabase}=require('./lib/health');
 const {resolveTrustProxyHops}=require('./lib/proxy-settings');
+const {parseCookieHeader,checkOrigin}=require('./lib/request-security');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -24,7 +25,7 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:databaseSslOp
 app.use(helmet({contentSecurityPolicy:false}));
 app.use(express.json({limit:'2mb'}));
 app.use(express.static(path.join(__dirname,'public')));
-app.use((req,res,next)=>{req.cookies={};for(const item of (req.headers.cookie||'').split(';')){const [k,...v]=item.trim().split('=');if(k)req.cookies[k]=decodeURIComponent(v.join('='));}next();});
+app.use((req,res,next)=>{req.cookies=parseCookieHeader(req.headers.cookie);next();});
 const loginLimit=rateLimit({windowMs:15*60*1000,limit:10,standardHeaders:true,legacyHeaders:false,message:{error:'Login ကြိုးစားမှုများလွန်းပါသည်။ ၁၅ မိနစ်အကြာ ပြန်ကြိုးစားပါ။'}});
 const orderTrackLimit=rateLimit({windowMs:15*60*1000,limit:20,standardHeaders:true,legacyHeaders:false,message:{error:'Order စစ်ဆေးမှုများလွန်းပါသည်။ ၁၅ မိနစ်အကြာ ပြန်ကြိုးစားပါ။'}});
 const seed=[
@@ -52,7 +53,7 @@ app.get('/api/site-settings',async(req,res)=>{try{const rows=(await pool.query("
 app.get('/api/admin/site-settings',requireAdmin,async(req,res)=>{try{const rows=(await pool.query('SELECT key,value FROM site_settings')).rows;res.json(Object.fromEntries(rows.map(x=>[x.key,x.value])));}catch{res.status(500).json({error:'Site settings မရပါ။'});}});
 app.put('/api/admin/site-settings',requireAdmin,sameOrigin,async(req,res)=>{const keys=['brand_name','logo_url','announcement','post_title','post_body','post_image_url'];const values=req.body||{};for(const k of keys){const v=String(values[k]||'');if(v.length>(['logo_url','post_image_url'].includes(k)?1400000:k==='post_body'?5000:k==='announcement'?1000:500))return res.status(400).json({error:'စာသားအရှည်ကန့်သတ်ချက် ကျော်နေပါသည်။'});if(['logo_url','post_image_url'].includes(k)&&v&&!(/^https:\/\//i.test(v)||/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/i.test(v)))return res.status(400).json({error:'ပုံ URL သည် HTTPS သို့မဟုတ် PNG/JPG/WebP Upload ဖြစ်ရပါမည်။'});if(['logo_url','post_image_url'].includes(k)&&v.startsWith('data:')&&v.length>1400000)return res.status(400).json({error:'ပုံအရွယ်အစား 1MB ထက်နည်းရပါမည်။'});}try{for(const k of keys)await pool.query('INSERT INTO site_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()',[k,String(values[k]||'')]);res.json({ok:true});}catch{res.status(500).json({error:'Settings သိမ်းဆည်းမရပါ။'});}});
 function requireAdmin(req,res,next){const token=req.cookies.hk_admin;if(!token)return res.status(401).json({error:'Admin login ဝင်ရန်လိုအပ်ပါသည်။'});try{req.admin=jwt.verify(token,SECRET);next();}catch{return res.status(401).json({error:'Login session သက်တမ်းကုန်ပါပြီ။'});}}
-function sameOrigin(req,res,next){const origin=req.get('origin');if(!origin)return res.status(403).json({error:'Origin header လိုအပ်ပါသည်။'});const host=req.get('host');try{if(new URL(origin).host!==host)return res.status(403).json({error:'Cross-origin request ပိတ်ထားပါသည်။'});}catch{return res.status(403).json({error:'Origin မမှန်ပါ။'});}next();}
+function sameOrigin(req,res,next){const check=checkOrigin(req.get('origin'),req.get('host'),req.protocol);if(!check.ok){const messages={missing:'Origin header လိုအပ်ပါသည်။',invalid:'Origin မမှန်ပါ။',mismatch:'Cross-origin request ပိတ်ထားပါသည်။'};return res.status(403).json({error:messages[check.reason]||'Origin မမှန်ပါ။'});}next();}
 function publicService(s){return {...s,packages:typeof s.packages==='string'?JSON.parse(s.packages):s.packages};}
 
 // Customer Google OAuth (credentials are supplied only through deployment environment variables)
