@@ -7,8 +7,11 @@ const jwt=require('jsonwebtoken');
 const {Pool}=require('pg');
 const helmet=require('helmet');
 const {rateLimit}=require('express-rate-limit');
+const {checkDatabase}=require('./lib/health');
+const {resolveTrustProxyHops}=require('./lib/proxy-settings');
 
 const app=express();
+app.set('trust proxy',resolveTrustProxyHops(process.env));
 const PORT=Number(process.env.PORT||3000);
 const SECRET=process.env.JWT_SECRET;
 function databaseSslOptions(databaseUrl){
@@ -84,7 +87,7 @@ function requireCustomer(req,res,next){const token=req.cookies.hk_customer;if(!t
 app.get('/api/customer/me',requireCustomer,async(req,res)=>{try{const c=(await pool.query('SELECT id,provider,email,name,avatar_url FROM customers WHERE id=$1',[req.customer.customerId])).rows[0];if(!c)return res.status(401).json({error:'Customer account မတွေ့ပါ။'});res.setHeader('Cache-Control','no-store');res.json(c);}catch{res.status(500).json({error:'Customer account ရယူမရပါ။'});}});
 app.post('/api/customer/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_customer=; ${cookieOpts(0)}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 
-app.get('/api/health',(req,res)=>res.json({ok:true,app:'HTET KABAR',stage:'backend-foundation',database:'connected'}));
+app.get('/api/health',async(req,res)=>{const health=await checkDatabase(pool);res.status(health.status).json(health.body);});
 app.get('/api/services',async(req,res)=>{try{const result=await pool.query('SELECT * FROM services WHERE active=true ORDER BY id');res.json(result.rows.map(publicService));}catch(e){res.status(500).json({error:'Service စာရင်းရယူ၍မရပါ။'});}});
 app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!email||!password)return res.status(400).json({error:'Email နှင့် Password ဖြည့်ပါ။'});const admin=(await pool.query('SELECT * FROM admins WHERE lower(btrim(email))=$1',[email])).rows[0];if(!admin||!(await bcrypt.compare(password,admin.password_hash)))return res.status(401).json({error:'Email သို့မဟုတ် Password မှားနေပါသည်။'});const token=jwt.sign({adminId:admin.id,email:admin.email},SECRET,{expiresIn:'8h'});res.setHeader('Set-Cookie',`hk_admin=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({ok:true,email:admin.email});}catch(e){res.status(500).json({error:'Login လုပ်၍မရပါ။'});}});
 app.post('/api/admin/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV==='production'?'; Secure':''}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
