@@ -36,6 +36,8 @@ Manual alternative:
 - Admin URL: `/admin`
 - Login uses email and password; password hashes are bcrypt.
 - Admin endpoints require a valid HttpOnly cookie.
+- Cookie parsing safely handles malformed percent-encoding and special property names; duplicate cookie names keep the first value.
+- Mutating requests require a matching HTTP(S) Origin host and protocol; malformed, missing, and cross-origin headers are rejected.
 - Admin mutation and order/payment submission endpoints check same-origin requests.
 - Customer tracking is rate-limited (20 attempts per IP per 15 minutes) and validates order code format before database lookup.
 - Express trusts one reverse-proxy hop by default in production; set `TRUST_PROXY_HOPS` to a non-negative integer (0–10) only when the deployment topology requires a different value.
@@ -54,6 +56,7 @@ Manual alternative:
 ## Validation
 - `npm run check` runs syntax checks for `server.js` and `public/app.js`.
 - `npm test` covers database health response behavior and proxy-hop configuration, plus the existing admin-account tests.
+- `npm test` also covers request-cookie parsing and strict same-origin validation, including malformed and mismatched origins.
 - GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
 - `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
 - Syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
