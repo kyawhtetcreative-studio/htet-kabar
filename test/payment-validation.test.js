@@ -48,7 +48,7 @@ test('accepts only configured payment methods', () => {
 });
 
 test('requires a bounded printable transaction reference', () => {
-  for (const reference of ['', '  ', 'ab', 'x'.repeat(161), 'abc\\u0000def']) {
+  for (const reference of ['', '  ', 'ab', 'x'.repeat(161), 'abc\u0000def']) {
     assert.equal(validatePaymentInput({ ...validPayment(), reference }).ok, false);
   }
 });
