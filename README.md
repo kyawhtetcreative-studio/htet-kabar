@@ -54,7 +54,8 @@ Manual alternative:
 - Admin orders/payments/settings: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`, `GET/PUT /api/admin/site-settings`
 
 ## Validation
-- `npm run check` runs syntax checks for `server.js` and `public/app.js`.
+- `npm run check` runs syntax checks for `server.js`, `public/app.js`, `scripts/admin-account.js`, and `lib/service-validation.js`.
+- Admin service/package create and update endpoints validate trimmed text fields, lowercase slug format, icon size, active flag type, 1–25 packages, duplicate package names, package descriptions, and nonnegative Kyat prices with at most two decimals within the PostgreSQL numeric range. Invalid input returns HTTP 400 before the database write.
 - `npm test` covers database health response behavior and proxy-hop configuration, plus the existing admin-account tests.
 - `npm test` also covers request-cookie parsing and strict same-origin validation, including malformed and mismatched origins.
 - GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
