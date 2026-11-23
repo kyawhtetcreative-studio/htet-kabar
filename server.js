@@ -11,6 +11,7 @@ const {checkDatabase}=require('./lib/health');
 const {resolveTrustProxyHops}=require('./lib/proxy-settings');
 const {parseCookieHeader,checkOrigin}=require('./lib/request-security');
 const {validateServiceInput}=require('./lib/service-validation');
+const {validatePaymentInput}=require('./lib/payment-validation');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -157,7 +158,9 @@ app.post('/api/orders',rateLimit({windowMs:60*60*1000,limit:8,standardHeaders:tr
  }catch(e){res.status(500).json({error:'Order သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});}
 });
 app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,standardHeaders:true,legacyHeaders:false}),sameOrigin,async(req,res)=>{
- const b=req.body||{};if(!validText(b.phone,40)||!validText(b.method,80)||(typeof b.reference!=='string'||b.reference.length>160)||!validText(b.referenceLast6,6)||!/^[0-9]{6}$/.test(b.referenceLast6)||!validText(b.paidDate,10)||!validText(b.paidTime,5)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(b.paidDate)||!/^[0-9]{2}:[0-9]{2}$/.test(b.paidTime))return res.status(400).json({error:'ဖုန်း၊ Payment Method၊ ငွေလွှဲသည့် ရက်စွဲ/အချိန်နှင့် Transaction Reference မှန်ကန်စွာဖြည့်ပါ။'});
+ const validation=validatePaymentInput(req.body);
+ if(!validation.ok)return res.status(400).json({error:validation.error});
+ const b=validation.value;
  const client=await pool.connect();
  try{
   await client.query('BEGIN');
