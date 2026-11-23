@@ -53,6 +53,12 @@ Manual alternative:
 - Admin services: `GET/POST /api/admin/services`, `PUT/DELETE /api/admin/services/:id`
 - Admin orders/payments/settings: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`, `GET/PUT /api/admin/site-settings`
 
+
+## Payment submission validation
+- Customer payment submissions require a supported method (KBZPay, UAB Pay, or AYA Bank), a non-empty transaction reference, six numeric receipt digits, and a real calendar date / 24-hour time.
+- The server normalizes submitted fields and rejects invalid values before database access. The browser also marks the transaction-reference field as required, but server validation is authoritative.
+- Payment status is still reviewed manually by an admin. A submitted reference is not proof of payment and is never auto-approved.
+
 ## Validation
 - `npm run check` runs syntax checks for `server.js`, `public/app.js`, `scripts/admin-account.js`, and `lib/service-validation.js`.
 - Admin service/package create and update endpoints validate trimmed text fields, lowercase slug format, icon size, active flag type, 1–25 packages, duplicate package names, package descriptions, and nonnegative Kyat prices with at most two decimals within the PostgreSQL numeric range. Invalid input returns HTTP 400 before the database write.
