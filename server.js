@@ -10,6 +10,7 @@ const {rateLimit}=require('express-rate-limit');
 const {checkDatabase}=require('./lib/health');
 const {resolveTrustProxyHops}=require('./lib/proxy-settings');
 const {parseCookieHeader,checkOrigin}=require('./lib/request-security');
+const {validateServiceInput}=require('./lib/service-validation');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -94,8 +95,31 @@ app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const ema
 app.post('/api/admin/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV==='production'?'; Secure':''}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 app.get('/api/admin/me',requireAdmin,(req,res)=>res.json({ok:true,email:req.admin.email}));
 app.get('/api/admin/services',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM services ORDER BY id')).rows.map(publicService));}catch{res.status(500).json({error:'Admin service list မရပါ။'});}});
-app.post('/api/admin/services',requireAdmin,sameOrigin,async(req,res)=>{const {name,slug,icon,description,active,packages}=req.body||{};if(!name||!slug||!description||!Array.isArray(packages))return res.status(400).json({error:'အမည်၊ slug၊ ဖော်ပြချက်၊ package များ ဖြည့်ပါ။'});if(packages.some(p=>!p.name||!Number.isFinite(Number(p.price))||Number(p.price)<0))return res.status(400).json({error:'Package ဈေးနှုန်း မမှန်ပါ။'});try{const r=await pool.query('INSERT INTO services(name,slug,icon,description,active,packages) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[name.trim(),slug.trim(),icon||'✦',description.trim(),active!==false,JSON.stringify(packages)]);res.status(201).json(publicService(r.rows[0]));}catch{res.status(409).json({error:'Slug ထပ်နေခြင်း သို့မဟုတ် သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});}});
-app.put('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{const {name,slug,icon,description,active,packages}=req.body||{};if(!name||!slug||!description||!Array.isArray(packages)||packages.some(p=>!p.name||!Number.isFinite(Number(p.price))||Number(p.price)<0))return res.status(400).json({error:'Service အချက်အလက်နှင့် package ဈေးနှုန်းများ စစ်ဆေးပါ။'});try{const r=await pool.query('UPDATE services SET name=$1,slug=$2,icon=$3,description=$4,active=$5,packages=$6 WHERE id=$7 RETURNING *',[name.trim(),slug.trim(),icon||'✦',description.trim(),active!==false,JSON.stringify(packages),req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});res.json(publicService(r.rows[0]));}catch{res.status(409).json({error:'Update မအောင်မြင်ပါ။ Slug ထပ်နေခြင်း ဖြစ်နိုင်ပါသည်။'});}});
+app.post('/api/admin/services',requireAdmin,sameOrigin,async(req,res)=>{
+ const validation=validateServiceInput(req.body);
+ if(!validation.ok)return res.status(400).json({error:validation.error});
+ const s=validation.value;
+ try{
+  const r=await pool.query('INSERT INTO services(name,slug,icon,description,active,packages) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[s.name,s.slug,s.icon,s.description,s.active,JSON.stringify(s.packages)]);
+  res.status(201).json(publicService(r.rows[0]));
+ }catch{
+  res.status(409).json({error:'Slug ထပ်နေခြင်း သို့မဟုတ် သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});
+ }
+});
+app.put('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{
+ const validation=validateServiceInput(req.body);
+ if(!validation.ok)return res.status(400).json({error:validation.error});
+ const s=validation.value;
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Service ID မမှန်ပါ။'});
+ try{
+  const r=await pool.query('UPDATE services SET name=$1,slug=$2,icon=$3,description=$4,active=$5,packages=$6 WHERE id=$7 RETURNING *',[s.name,s.slug,s.icon,s.description,s.active,JSON.stringify(s.packages),id]);
+  if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});
+  res.json(publicService(r.rows[0]));
+ }catch{
+  res.status(409).json({error:'Update မအောင်မြင်ပါ။ Slug ထပ်နေခြင်း ဖြစ်နိုင်ပါသည်။'});
+ }
+});
 app.delete('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{try{const r=await pool.query('UPDATE services SET active=false WHERE id=$1 RETURNING id',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});res.json({ok:true});}catch{res.status(500).json({error:'Service ပိတ်၍မရပါ။'});}});
 
 // Customer orders and manual payment review
