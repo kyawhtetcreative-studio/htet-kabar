@@ -20,17 +20,18 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 6. Run `npm ci`, then `npm start`.
 7. Open `http://localhost:10000` (or the configured `PORT`). Admin control panel: `/admin`.
 
-## Render deployment (Blueprint recommended)
-- A root `render.yaml` now defines a Node web service and PostgreSQL database in Singapore, connected with Render's database reference.
+## Render deployment
+- The root `render.yaml` defines a **new** Node web service (`htet-kabar-web`) and PostgreSQL database (`htet-kabar-db`) in Singapore, connected with Render's database reference. It is a template for a separate stack; it does not automatically reconfigure an existing manually-created service.
+- **Existing-account warning (checked 2026-11-24):** the current Render account has a web service named `htet-kabar` and a PostgreSQL database named `htet_kabar_db` in Oregon. Those names/region do not match this Blueprint. Do not create this Blueprint unless you intentionally want a second stack; use the Manual alternative for the existing service or reconcile resource ownership/names first.
 - Build command: `npm ci`; start command: `npm start`; health check: `/api/health`.
 - The Blueprint generates `JWT_SECRET` and prompts for `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Use a strong admin password with at least 12 characters. Never commit secrets.
 - Automatic deploys are disabled in the Blueprint; deploy from the Render Dashboard after reviewing changes.
-- To deploy: Render Dashboard → **New → Blueprint** → connect this repo and `main` → review the resources and environment values → **Deploy Blueprint**.
+- To create this separate stack: Render Dashboard → **New → Blueprint** → connect this repo and `main` → review the resources and environment values carefully → **Deploy Blueprint**.
 - This Blueprint uses Free plans for a demo/testing setup. Render Free Postgres expires after 30 days and has no backups; do not store production customer/order/payment data there. For production, select a paid database plan and set up/verify backups before launch.
 - The Blueprint does not confirm that a service is already deployed or provide a live URL until the user deploys it.
 
 Manual alternative:
-- Create a Node Web Service (not a Static Site), build command `npm ci`, start command `npm start`, attach PostgreSQL, and set the same environment variables.
+- For an existing service, configure its Node Web Service (not a Static Site), build command `npm ci`, start command `npm start`, health check `/api/health`, attach the intended PostgreSQL database, and set the same environment variables. Do not merge the backend PR until `DATABASE_URL` and `JWT_SECRET` are present; the current service auto-deploys from `main`.
 - Use HTTPS in production. Never commit secrets or put credentials in screenshots.
 
 ## Admin
@@ -106,7 +107,7 @@ Remove-Item Env:ALLOW_DATABASE_RESTORE
 - A successful archive listing does not prove that a restore will succeed; perform a real restore rehearsal against a separate test database before production launch.
 
 ### Production operations still required
-- The current Render Free PostgreSQL plan is temporary and has no managed backups. Upgrade to a suitable paid database plan before storing live customer/order/payment data, and confirm retention/backup settings in Render.
+- The current Render Free PostgreSQL plan is temporary, has no managed backups, and is scheduled to expire on **2026-12-21**. Upgrade to a suitable paid database plan before storing live customer/order/payment data, and confirm retention/backup settings in Render.
 - Before database maintenance or risky changes, take a PostgreSQL backup and verify a restore to a separate test database.
 - Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
 
