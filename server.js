@@ -12,6 +12,7 @@ const {resolveTrustProxyHops}=require('./lib/proxy-settings');
 const {parseCookieHeader,checkOrigin}=require('./lib/request-security');
 const {validateServiceInput}=require('./lib/service-validation');
 const {validatePaymentInput}=require('./lib/payment-validation');
+const {validatePaymentAccountInput}=require('./lib/payment-account-validation');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -46,7 +47,14 @@ async function initialize(){
  await pool.query(`CREATE TABLE IF NOT EXISTS admins(id SERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS services(id SERIAL PRIMARY KEY,name TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,icon TEXT DEFAULT '✦',description TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT true,packages JSONB NOT NULL DEFAULT '[]',created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,provider TEXT NOT NULL,provider_id TEXT NOT NULL,email TEXT,name TEXT,avatar_url TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),last_login_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(provider,provider_id));`);
+ CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,provider TEXT NOT NULL,provider_id TEXT NOT NULL,email TEXT,name TEXT,avatar_url TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),last_login_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(provider,provider_id));
+ CREATE TABLE IF NOT EXISTS payment_accounts(
+ id SERIAL PRIMARY KEY, method TEXT NOT NULL CHECK (method IN ('KBZPay','UAB Pay','AYA Bank')),
+ account_name TEXT NOT NULL, account_number TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '',
+ active BOOLEAN NOT NULL DEFAULT true, display_order INTEGER NOT NULL DEFAULT 0 CHECK (display_order BETWEEN 0 AND 999),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(method,account_number));
+ CREATE INDEX IF NOT EXISTS payment_accounts_active_order_idx ON payment_accounts(active,display_order,id);
+ CREATE UNIQUE INDEX IF NOT EXISTS payment_accounts_one_active_method_uidx ON payment_accounts(method) WHERE active=true;`);
  const n=Number((await pool.query('SELECT COUNT(*) FROM services')).rows[0].count);
  if(!n)for(const s of seed)await pool.query('INSERT INTO services(name,slug,icon,description,packages) VALUES($1,$2,$3,$4,$5)',[s.name,s.slug,s.icon,s.description,JSON.stringify(s.packages)]);
  if(process.env.ADMIN_EMAIL&&process.env.ADMIN_PASSWORD){const hash=await bcrypt.hash(process.env.ADMIN_PASSWORD,12);await pool.query('INSERT INTO admins(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING',[process.env.ADMIN_EMAIL.toLowerCase(),hash]);}
@@ -92,6 +100,7 @@ app.post('/api/customer/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie
 
 app.get('/api/health',async(req,res)=>{const health=await checkDatabase(pool);res.status(health.status).json(health.body);});
 app.get('/api/services',async(req,res)=>{try{const result=await pool.query('SELECT * FROM services WHERE active=true ORDER BY id');res.json(result.rows.map(publicService));}catch(e){res.status(500).json({error:'Service စာရင်းရယူ၍မရပါ။'});}});
+app.get('/api/payment-accounts',async(req,res)=>{try{const result=await pool.query('SELECT id,method,account_name,account_number,instructions,display_order FROM payment_accounts WHERE active=true ORDER BY display_order,id');res.json(result.rows);}catch{res.status(500).json({error:'Payment account စာရင်း ရယူ၍မရပါ။'});}});
 app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');if(!email||!password)return res.status(400).json({error:'Email နှင့် Password ဖြည့်ပါ။'});const admin=(await pool.query('SELECT * FROM admins WHERE lower(btrim(email))=$1',[email])).rows[0];if(!admin||!(await bcrypt.compare(password,admin.password_hash)))return res.status(401).json({error:'Email သို့မဟုတ် Password မှားနေပါသည်။'});const token=jwt.sign({adminId:admin.id,email:admin.email},SECRET,{expiresIn:'8h'});res.setHeader('Set-Cookie',`hk_admin=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({ok:true,email:admin.email});}catch(e){res.status(500).json({error:'Login လုပ်၍မရပါ။'});}});
 app.post('/api/admin/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV==='production'?'; Secure':''}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 app.get('/api/admin/me',requireAdmin,(req,res)=>res.json({ok:true,email:req.admin.email}));
@@ -122,6 +131,11 @@ app.put('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{
  }
 });
 app.delete('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{try{const r=await pool.query('UPDATE services SET active=false WHERE id=$1 RETURNING id',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});res.json({ok:true});}catch{res.status(500).json({error:'Service ပိတ်၍မရပါ။'});}});
+
+app.get('/api/admin/payment-accounts',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at FROM payment_accounts ORDER BY display_order,id')).rows);}catch{res.status(500).json({error:'Payment account စာရင်း ရယူ၍မရပါ။'});}});
+app.post('/api/admin/payment-accounts',requireAdmin,sameOrigin,async(req,res)=>{const validation=validatePaymentAccountInput(req.body);if(!validation.ok)return res.status(400).json({error:validation.error});const a=validation.value;try{const result=await pool.query('INSERT INTO payment_accounts(method,account_name,account_number,instructions,active,display_order) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[a.method,a.accountName,a.accountNumber,a.instructions,a.active,a.displayOrder]);res.status(201).json(result.rows[0]);}catch(e){if(e.code==='23505')return res.status(409).json({error:'ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။'});res.status(500).json({error:'Payment account သိမ်းဆည်း၍မရပါ။'});}});
+app.put('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});const validation=validatePaymentAccountInput(req.body);if(!validation.ok)return res.status(400).json({error:validation.error});const a=validation.value;try{const result=await pool.query('UPDATE payment_accounts SET method=$1,account_name=$2,account_number=$3,instructions=$4,active=$5,display_order=$6,updated_at=now() WHERE id=$7 RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[a.method,a.accountName,a.accountNumber,a.instructions,a.active,a.displayOrder,id]);if(!result.rows[0])return res.status(404).json({error:'Payment account မတွေ့ပါ။'});res.json(result.rows[0]);}catch(e){if(e.code==='23505')return res.status(409).json({error:'ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။'});res.status(500).json({error:'Payment account ပြင်ဆင်၍မရပါ။'});}});
+app.delete('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});try{const result=await pool.query('UPDATE payment_accounts SET active=false,updated_at=now() WHERE id=$1 RETURNING id',[id]);if(!result.rows[0])return res.status(404).json({error:'Payment account မတွေ့ပါ။'});res.json({ok:true});}catch{res.status(500).json({error:'Payment account ပိတ်၍မရပါ။'});}});
 
 // Customer orders and manual payment review
 async function ensureOrderTables(){
@@ -166,6 +180,8 @@ app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,sta
   await client.query('BEGIN');
   const order=(await client.query('SELECT * FROM orders WHERE order_code=$1 AND phone=$2 FOR UPDATE',[req.params.code,b.phone.trim()])).rows[0];
   if(!order){await client.query('ROLLBACK');return res.status(404).json({error:'Order မတွေ့ပါ။'});}
+  const activeAccount=(await client.query('SELECT id FROM payment_accounts WHERE method=$1 AND active=true LIMIT 1',[b.method])).rows[0];
+  if(!activeAccount){await client.query('ROLLBACK');return res.status(400).json({error:'ရွေးချယ်ထားသော Payment Method အတွက် အသုံးပြုနိုင်သည့် အကောင့် မရှိသေးပါ။'});}
   if(order.payment_status==='paid'){await client.query('ROLLBACK');return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});}
   const pending=(await client.query("SELECT id FROM payments WHERE order_id=$1 AND status='pending' LIMIT 1",[order.id])).rows[0];
   if(pending){await client.query('ROLLBACK');return res.status(409).json({error:'Payment တင်ပြပြီး Admin စစ်ဆေးနေဆဲဖြစ်ပါသည်။'});}

@@ -7,7 +7,7 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 - Customer order submission with server-side service/package/price validation
 - Manual payment details and transaction reference submission (payments are not automatically verified)
 - Order tracking using order code + phone number
-- Admin authentication, service/package management, site settings, order review, and payment approve/reject
+- Admin authentication, service/package and payment-account management, site settings, order review, and payment approve/reject
 - PostgreSQL persistence, bcrypt password hashes, expiring HttpOnly admin cookies, login/order/payment rate limits, security headers, and same-origin checks on cookie-authenticated requests
 - Local PostgreSQL custom-format backup and guarded restore utilities
 
@@ -47,14 +47,23 @@ Manual alternative:
 
 ## API summary
 - `GET /api/health`
-- `GET /api/services`
+- `GET /api/services`, `GET /api/payment-accounts`
 - `POST /api/orders`
 - `POST /api/orders/:code/payment`
 - `GET /api/orders/:code?phone=...`
 - `POST /api/admin/login`, `POST /api/admin/logout`, `GET /api/admin/me`
 - Admin services: `GET/POST /api/admin/services`, `PUT/DELETE /api/admin/services/:id`
+- Admin payment accounts: `GET/POST /api/admin/payment-accounts`, `PUT/DELETE /api/admin/payment-accounts/:id`
 - Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
 - Admin settings: `GET/PUT /api/admin/site-settings`
+
+## Payment account management
+- Active payment accounts are loaded from PostgreSQL and displayed on the public website; account details are no longer embedded in the HTML or browser JavaScript.
+- Admins can add, edit, enable, and disable KBZPay, UAB Pay, and AYA Bank accounts from the Admin Dashboard. Only one account per method can be active at a time.
+- Public API responses include only active accounts and the fields needed for payment instructions. All account mutations require admin authentication and a same-origin request.
+- The server accepts a payment submission only when an active account exists for the selected method. Payment verification remains manual.
+- The application creates the `payment_accounts` table at startup if it does not exist. The equivalent idempotent SQL is available at `database/migrations/003_payment_accounts.sql`; run it after migrations 001 and 002 on manually-managed PostgreSQL/Supabase installations.
+- After deployment, sign in at `/admin` and add/confirm the current receiving account details. Until at least one active account is configured, customers see a setup message and cannot submit payment details.
 
 ## Payment submission validation
 - Customer payment submissions require a supported method (KBZPay, UAB Pay, or AYA Bank), a non-empty transaction reference, six numeric receipt digits, and a real calendar date / 24-hour time.
@@ -112,7 +121,7 @@ Remove-Item Env:ALLOW_DATABASE_RESTORE
 - Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
 
 ## Supabase setup (optional alternative)
-1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, then `database/migrations/002_payment_integrity.sql`. These migrations only create missing tables and indexes; they do not delete or truncate orders, payments, customers, or services. The payment migration prevents an order from having more than one pending payment record.
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, then `database/migrations/003_payment_accounts.sql`. These migrations only create missing tables and indexes; they do not delete or truncate orders, payments, customers, or services. The payment migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
 4. Set `NODE_ENV=production`.
