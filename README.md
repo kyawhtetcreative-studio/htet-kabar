@@ -9,6 +9,7 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 - Order tracking using order code + phone number
 - Admin authentication, service/package management, site settings, order review, and payment approve/reject
 - PostgreSQL persistence, bcrypt password hashes, expiring HttpOnly admin cookies, login/order/payment rate limits, security headers, and same-origin checks on cookie-authenticated requests
+- Local PostgreSQL custom-format backup and guarded restore utilities
 
 ## Local setup
 1. Install Node.js 18+.
@@ -51,29 +52,65 @@ Manual alternative:
 - `GET /api/orders/:code?phone=...`
 - `POST /api/admin/login`, `POST /api/admin/logout`, `GET /api/admin/me`
 - Admin services: `GET/POST /api/admin/services`, `PUT/DELETE /api/admin/services/:id`
-- Admin orders/payments/settings: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`, `GET/PUT /api/admin/site-settings`
-
+- Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
+- Admin settings: `GET/PUT /api/admin/site-settings`
 
 ## Payment submission validation
 - Customer payment submissions require a supported method (KBZPay, UAB Pay, or AYA Bank), a non-empty transaction reference, six numeric receipt digits, and a real calendar date / 24-hour time.
 - The server normalizes submitted fields and rejects invalid values before database access. The browser also marks the transaction-reference field as required, but server validation is authoritative.
-- Payment status is still reviewed manually by an admin. A submitted reference is not proof of payment and is never auto-approved.
+- Payment status is reviewed manually by an admin. A submitted reference is not proof of payment and is never auto-approved.
+- Image/file receipt upload is not implemented in this release; retain the bank/app receipt and transaction reference for manual review.
 
 ## Validation
-- `npm run check` runs syntax checks for `server.js`, `public/app.js`, `scripts/admin-account.js`, and `lib/service-validation.js`.
+- `npm run check` runs syntax checks for the server, browser app, admin and database scripts, and all shared validation/security modules.
 - Admin service/package create and update endpoints validate trimmed text fields, lowercase slug format, icon size, active flag type, 1–25 packages, duplicate package names, package descriptions, and nonnegative Kyat prices with at most two decimals within the PostgreSQL numeric range. Invalid input returns HTTP 400 before the database write.
-- `npm test` covers database health response behavior and proxy-hop configuration, plus the existing admin-account tests.
-- `npm test` also covers request-cookie parsing and strict same-origin validation, including malformed and mismatched origins.
-- GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`. A full lockfile is checked in so CI and local installs can use reproducible dependency versions.
+- Payment input is validated server-side, including supported payment method, transaction reference, six receipt digits, and valid date/time.
+- `npm test` covers database health behavior, proxy configuration, request-cookie parsing, same-origin validation, service/package input, payment input, and PostgreSQL backup/restore command safety.
+- GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`.
 - `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
-- Syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
+- Unit tests and syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
 
-## Operations / backup
-- Payment confirmation is manual: inspect the payment details in Admin and approve or reject; no automatic payment verification is claimed.
-- Before database maintenance or risky changes, take a PostgreSQL backup using your provider's backup facility or `pg_dump`, and verify you can restore it.
-- Deployment smoke test, live domain verification, database backup/restore rehearsal, and production security review are still pending.
+## Operations / PostgreSQL backup and restore
 
-## Supabase setup
+### Requirements
+- Install PostgreSQL client tools (`pg_dump` and `pg_restore`) on the computer that will run the backup. Use PostgreSQL 18 client tools for the current Render PostgreSQL 18 database, or a compatible newer client.
+- Confirm both commands are on `PATH` with `pg_dump --version` and `pg_restore --version`.
+- Set `DATABASE_URL` in the local, untracked `.env` file. For a computer outside Render, use the database's **External Database URL** from the Render database dashboard, not its internal-only URL. Do not paste the URL into chat, screenshots, or source control.
+- The backup scripts read `.env` locally. They pass database credentials to PostgreSQL client tools through environment variables rather than command-line arguments and do not print the connection URL.
+
+### Create a backup
+
+```powershell
+npm run db:backup
+```
+
+- Creates `backups/htet-kabar-<UTC timestamp>.dump` in PostgreSQL custom archive format.
+- Refuses to overwrite an existing backup and creates the file with restrictive permissions where the operating system supports them.
+- Runs `pg_restore --list` after `pg_dump` to verify the archive can be read. This is an archive-integrity check, not a full database restore rehearsal.
+- `backups/` and `*.dump` are ignored by Git. Copy the verified dump to a separate encrypted/off-device location; a local-only copy is not sufficient protection.
+- Backups are manual; no scheduled backup job is configured by this repository.
+
+### Restore a backup (destructive)
+
+Restore only to a separate test database first. The restore command drops existing objects in the selected target database before recreating them. It requires both a temporary environment gate and an exact database-name confirmation:
+
+```powershell
+$env:ALLOW_DATABASE_RESTORE = 'YES'
+npm run db:restore -- --file "backups\htet-kabar-YYYYMMDDTHHMMSSZ.dump" --confirm-database "htet_kabar_db"
+Remove-Item Env:ALLOW_DATABASE_RESTORE
+```
+
+- The `--confirm-database` value must exactly match the database name in `DATABASE_URL` (the current Render database name is `htet_kabar_db`; use the exact name shown in your own URL if it differs).
+- The tool checks that the archive is readable before starting the restore and uses a single transaction with `--exit-on-error`.
+- Never run this against the live customer database unless a restore is explicitly intended, a separate verified backup exists, and the target database name has been checked. Prefer rehearsing on a newly created empty test database.
+- A successful archive listing does not prove that a restore will succeed; perform a real restore rehearsal against a separate test database before production launch.
+
+### Production operations still required
+- The current Render Free PostgreSQL plan is temporary and has no managed backups. Upgrade to a suitable paid database plan before storing live customer/order/payment data, and confirm retention/backup settings in Render.
+- Before database maintenance or risky changes, take a PostgreSQL backup and verify a restore to a separate test database.
+- Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
+
+## Supabase setup (optional alternative)
 1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, then `database/migrations/002_payment_integrity.sql`. These migrations only create missing tables and indexes; they do not delete or truncate orders, payments, customers, or services. The payment migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
@@ -88,7 +125,6 @@ The server does not contain a default password and never prints one.
 - `setup` creates the account only when it does not already exist. `reset` changes only that account's password hash.
 - A password must contain at least 12 characters. Keep `ADMIN_PASSWORD` in environment/secrets, not in source files or SQL.
 - Existing startup seeding creates an account only when `ADMIN_EMAIL` and `ADMIN_PASSWORD` are configured; it does not reset an existing account.
-
 
 ## Customer Google OAuth Login
 - Customer sign-in is implemented with Google OAuth authorization code flow; Google login remains disabled until the OAuth credentials are configured in Render.
