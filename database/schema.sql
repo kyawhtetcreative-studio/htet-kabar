@@ -63,7 +63,10 @@ CREATE TABLE IF NOT EXISTS payments (
   admin_note TEXT,
   submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   reviewed_at TIMESTAMPTZ
-);
+,
+  receipt_mime_type TEXT,
+  receipt_data BYTEA,
+  receipt_size INTEGER);
 
 CREATE UNIQUE INDEX IF NOT EXISTS payments_pending_order_uidx
   ON payments(order_id)

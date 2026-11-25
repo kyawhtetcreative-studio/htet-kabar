@@ -13,6 +13,7 @@ const {parseCookieHeader,checkOrigin}=require('./lib/request-security');
 const {validateServiceInput}=require('./lib/service-validation');
 const {validatePaymentInput}=require('./lib/payment-validation');
 const {validatePaymentAccountInput}=require('./lib/payment-account-validation');
+const {validatePaymentReceipt}=require('./lib/payment-receipt');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -152,6 +153,9 @@ async function ensureOrderTables(){
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_date DATE;
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_time TIME;
  ALTER TABLE payments ADD COLUMN IF NOT EXISTS reference_last6 TEXT;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_mime_type TEXT;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_data BYTEA;
+ ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_size INTEGER;
 `);
 }
 function validText(v,max){return typeof v==='string'&&v.trim().length>0&&v.trim().length<=max;}
@@ -175,6 +179,9 @@ app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,sta
  const validation=validatePaymentInput(req.body);
  if(!validation.ok)return res.status(400).json({error:validation.error});
  const b=validation.value;
+ const receiptValidation=validatePaymentReceipt(req.body?.receiptDataUrl);
+ if(!receiptValidation.ok)return res.status(400).json({error:receiptValidation.error});
+ const receipt=receiptValidation.value;
  const client=await pool.connect();
  try{
   await client.query('BEGIN');
@@ -185,7 +192,7 @@ app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,sta
   if(order.payment_status==='paid'){await client.query('ROLLBACK');return res.status(409).json({error:'Payment အတည်ပြုပြီးဖြစ်ပါသည်။'});}
   const pending=(await client.query("SELECT id FROM payments WHERE order_id=$1 AND status='pending' LIMIT 1",[order.id])).rows[0];
   if(pending){await client.query('ROLLBACK');return res.status(409).json({error:'Payment တင်ပြပြီး Admin စစ်ဆေးနေဆဲဖြစ်ပါသည်။'});}
-  await client.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time,reference_last6) VALUES($1,$2,$3,$4,$5,$6,$7)',[order.id,b.method.trim(),(b.reference||'').trim(),order.price,b.paidDate,b.paidTime,b.referenceLast6]);
+  await client.query('INSERT INTO payments(order_id,method,reference,amount,paid_date,paid_time,reference_last6,receipt_mime_type,receipt_data,receipt_size) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[order.id,b.method.trim(),(b.reference||'').trim(),order.price,b.paidDate,b.paidTime,b.referenceLast6,receipt?.mimeType||null,receipt?.data||null,receipt?.size||null]);
   await client.query("UPDATE orders SET payment_status='submitted',updated_at=now() WHERE id=$1",[order.id]);
   await client.query('COMMIT');
   res.status(201).json({message:'Payment တင်ပြပြီးပါပြီ။ Admin စစ်ဆေးပြီး အတည်ပြုပါမည်။'});
@@ -196,7 +203,8 @@ app.post('/api/orders/:code/payment',rateLimit({windowMs:60*60*1000,limit:10,sta
 });
 app.get('/api/orders/:code',orderTrackLimit,async(req,res)=>{const code=String(req.params.code||'').trim().toUpperCase(),phone=String(req.query.phone||'').trim();if(!/^HK-[A-F0-9]{8}$/.test(code))return res.status(400).json({error:'Order Code ပုံစံမမှန်ပါ။'});if(!validText(phone,40))return res.status(400).json({error:'Order စစ်ရန် ဖုန်းနံပါတ်လိုအပ်ပါသည်။'});try{const r=await pool.query('SELECT order_code,service_name,package_name,price,status,payment_status,created_at,updated_at FROM orders WHERE order_code=$1 AND phone=$2',[code,phone]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order စစ်ဆေး၍မရပါ။'});}});
 app.get('/api/admin/orders',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Order list ရယူ၍မရပါ။'});}});
-app.get('/api/admin/payments',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT p.*,o.order_code,o.customer_name,o.phone FROM payments p JOIN orders o ON o.id=p.order_id ORDER BY p.submitted_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Payment list ရယူ၍မရပါ။'});}});
+app.get('/api/admin/payments',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT p.id,p.order_id,p.method,p.reference,p.amount,p.paid_date,p.paid_time,p.reference_last6,p.status,p.admin_note,p.submitted_at,p.reviewed_at,(p.receipt_data IS NOT NULL) AS has_receipt,o.order_code,o.customer_name,o.phone FROM payments p JOIN orders o ON o.id=p.order_id ORDER BY p.submitted_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Payment list ရယူ၍မရပါ။'});}});
+app.get('/api/admin/payments/:id/receipt',requireAdmin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment ID မမှန်ပါ။'});try{const row=(await pool.query('SELECT receipt_mime_type,receipt_data FROM payments WHERE id=$1',[id])).rows[0];const extensions={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'};const extension=extensions[row?.receipt_mime_type];if(!row?.receipt_data||!extension)return res.status(404).json({error:'ပြေစာပုံ မတွေ့ပါ။'});const data=Buffer.isBuffer(row.receipt_data)?row.receipt_data:Buffer.from(row.receipt_data);res.setHeader('Content-Type',row.receipt_mime_type);res.setHeader('Content-Length',String(data.length));res.setHeader('Content-Disposition','inline; filename="payment-receipt-'+id+'.'+extension+'"');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");return res.status(200).send(data);}catch{return res.status(500).json({error:'ပြေစာပုံ ရယူ၍မရပါ။'});}});
 app.patch('/api/admin/orders/:id/status',requireAdmin,sameOrigin,async(req,res)=>{const allowed=['pending','reviewing','approved','rejected','completed'];if(!allowed.includes(req.body.status))return res.status(400).json({error:'Status မမှန်ပါ။'});try{const r=await pool.query('UPDATE orders SET status=$1,updated_at=now() WHERE id=$2 RETURNING *',[req.body.status,req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order status ပြင်ဆင်၍မရပါ။'});}});
 app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res)=>{
  if(!['approved','rejected'].includes(req.body.status))return res.status(400).json({error:'Payment review status မမှန်ပါ။'});
@@ -206,7 +214,7 @@ app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res
   const payment=(await client.query('SELECT * FROM payments WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
   if(!payment){await client.query('ROLLBACK');return res.status(404).json({error:'Payment မတွေ့ပါ။'});}
   if(payment.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'Payment ကို အကြိမ်တစ်ကြိမ်သာ စစ်ဆေးနိုင်ပါသည်။'});}
-  const result=(await client.query('UPDATE payments SET status=$1,admin_note=$2,reviewed_at=now() WHERE id=$3 AND status=\'pending\' RETURNING *',[req.body.status,String(req.body.note||'').slice(0,500),req.params.id])).rows[0];
+  const result=(await client.query('UPDATE payments SET status=$1,admin_note=$2,reviewed_at=now() WHERE id=$3 AND status=\'pending\' RETURNING id,order_id,method,reference,amount,paid_date,paid_time,reference_last6,status,admin_note,submitted_at,reviewed_at,(receipt_data IS NOT NULL) AS has_receipt',[req.body.status,String(req.body.note||'').slice(0,500),req.params.id])).rows[0];
   await client.query("UPDATE orders SET payment_status=$1,updated_at=now() WHERE id=$2",[req.body.status==='approved'?'paid':'rejected',payment.order_id]);
   await client.query('COMMIT');
   res.json(result);

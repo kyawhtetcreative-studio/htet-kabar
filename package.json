@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check scripts/admin-account.js && node --check scripts/db-backup.js && node --check scripts/db-restore.js && node --check lib/service-validation.js && node --check lib/payment-validation.js && node --check lib/request-security.js && node --check lib/health.js && node --check lib/proxy-settings.js && node --check lib/postgres-cli.js && node --check lib/payment-account-validation.js",
+    "check": "node --check server.js && node --check public/app.js && node --check scripts/admin-account.js && node --check scripts/db-backup.js && node --check scripts/db-restore.js && node --check lib/service-validation.js && node --check lib/payment-validation.js && node --check lib/request-security.js && node --check lib/health.js && node --check lib/proxy-settings.js && node --check lib/postgres-cli.js && node --check lib/payment-account-validation.js && node --check lib/payment-receipt.js",
     "test": "node --test",
     "admin:setup": "node scripts/admin-account.js setup",
     "admin:reset": "node scripts/admin-account.js reset",

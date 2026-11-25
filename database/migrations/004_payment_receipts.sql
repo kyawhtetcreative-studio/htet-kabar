@@ -1,0 +1,7 @@
+BEGIN;
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_mime_type TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_data BYTEA;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_size INTEGER;
+
+COMMIT;

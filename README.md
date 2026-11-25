@@ -69,16 +69,24 @@ Manual alternative:
 - Customer payment submissions require a supported method (KBZPay, UAB Pay, or AYA Bank), a non-empty transaction reference, six numeric receipt digits, and a real calendar date / 24-hour time.
 - The server normalizes submitted fields and rejects invalid values before database access. The browser also marks the transaction-reference field as required, but server validation is authoritative.
 - Payment status is reviewed manually by an admin. A submitted reference is not proof of payment and is never auto-approved.
-- Image/file receipt upload is not implemented in this release; retain the bank/app receipt and transaction reference for manual review.
+- Customers may optionally attach a PNG/JPEG/WebP payment receipt image (maximum 1MB) alongside the transaction reference. The server checks the declared type, canonical base64 encoding, size, and file signature before storing the binary in PostgreSQL.
+- Receipt bytes are excluded from payment-list and payment-review JSON responses. Only authenticated admins can view a receipt through `GET /api/admin/payments/:id/receipt`; the route sends a private, non-cacheable image response with `nosniff`.
+- PostgreSQL backups include receipt images because they are stored in the `payments` table. Keep backups encrypted and access-controlled; receipt storage increases database size.
+- Payment verification remains manual. A receipt image or transaction reference is submitted evidence only and never triggers automatic approval.
 
 ## Validation
 - `npm run check` runs syntax checks for the server, browser app, admin and database scripts, and all shared validation/security modules.
 - Admin service/package create and update endpoints validate trimmed text fields, lowercase slug format, icon size, active flag type, 1–25 packages, duplicate package names, package descriptions, and nonnegative Kyat prices with at most two decimals within the PostgreSQL numeric range. Invalid input returns HTTP 400 before the database write.
 - Payment input is validated server-side, including supported payment method, transaction reference, six receipt digits, and valid date/time.
-- `npm test` covers database health behavior, proxy configuration, request-cookie parsing, same-origin validation, service/package input, payment input, and PostgreSQL backup/restore command safety.
+- `npm test` covers database health behavior, proxy configuration, request-cookie parsing, same-origin validation, service/package input, payment input, payment-receipt image validation, and PostgreSQL backup/restore command safety.
 - GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`.
 - `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
 - Unit tests and syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
+
+## Payment receipt storage
+- Receipt images are optional and limited to 1MB in PNG, JPEG, or WebP format. Server-side validation checks canonical base64 and the matching file signature before writing the image to PostgreSQL `BYTEA` columns.
+- The public payment form sends the receipt image with the transaction reference. The admin payment list exposes only a `has_receipt` flag; receipt bytes are available only from the authenticated admin receipt endpoint and are never included in list or review JSON.
+- Receipt storage uses PostgreSQL space and is included in database backups. Keep backups encrypted/off-device and monitor database size. Receipt images are supporting evidence only; admins must verify payments manually.
 
 ## Operations / PostgreSQL backup and restore
 
