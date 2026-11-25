@@ -57,6 +57,12 @@ Manual alternative:
 - Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `GET /api/admin/payments/:id/receipt` (admin-only), `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
 - Admin settings: `GET/PUT /api/admin/site-settings`
 
+## Order status workflow
+- Admin order status changes are performed in a PostgreSQL transaction and lock the target order row before validating the transition.
+- Allowed transitions are `pending → reviewing/rejected`, `reviewing → pending/approved/rejected`, `approved → completed`, and `rejected → pending`. Completed orders are terminal; repeat submissions of the current status are treated as no-ops.
+- Moving an order to `approved` or `completed` requires `payment_status = paid`. Only the separate admin payment-review action can set a payment to approved/paid after the administrator manually verifies the transfer evidence.
+- Invalid order IDs and invalid transitions are rejected before an update. The UI must treat the API response as authoritative and display a conflict message when an attempted transition is not allowed.
+
 ## Payment account management
 - Active payment accounts are loaded from PostgreSQL and displayed on the public website; account details are no longer embedded in the HTML or browser JavaScript.
 - Admins can add, edit, enable, and disable KBZPay, UAB Pay, and AYA Bank accounts from the Admin Dashboard. Only one account per method can be active at a time.
