@@ -54,7 +54,7 @@ Manual alternative:
 - `POST /api/admin/login`, `POST /api/admin/logout`, `GET /api/admin/me`
 - Admin services: `GET/POST /api/admin/services`, `PUT/DELETE /api/admin/services/:id`
 - Admin payment accounts: `GET/POST /api/admin/payment-accounts`, `PUT/DELETE /api/admin/payment-accounts/:id`
-- Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
+- Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `GET /api/admin/payments/:id/receipt` (admin-only), `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
 - Admin settings: `GET/PUT /api/admin/site-settings`
 
 ## Payment account management
@@ -129,7 +129,7 @@ Remove-Item Env:ALLOW_DATABASE_RESTORE
 - Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
 
 ## Supabase setup (optional alternative)
-1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, then `database/migrations/003_payment_accounts.sql`. These migrations only create missing tables and indexes; they do not delete or truncate orders, payments, customers, or services. The payment migration prevents an order from having more than one pending payment record.
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, `database/migrations/003_payment_accounts.sql`, then `database/migrations/004_payment_receipts.sql`. These migrations add the admin, payment integrity, payment account, and optional receipt-storage structures without deleting or truncating existing orders, payments, customers, or services. The payment integrity migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
 4. Set `NODE_ENV=production`.
