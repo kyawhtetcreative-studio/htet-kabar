@@ -14,6 +14,7 @@ const {validateServiceInput}=require('./lib/service-validation');
 const {validatePaymentInput}=require('./lib/payment-validation');
 const {validatePaymentAccountInput}=require('./lib/payment-account-validation');
 const {validatePaymentReceipt}=require('./lib/payment-receipt');
+const {validateOrderStatusTransition}=require('./lib/order-status');
 
 const app=express();
 app.set('trust proxy',resolveTrustProxyHops(process.env));
@@ -205,7 +206,30 @@ app.get('/api/orders/:code',orderTrackLimit,async(req,res)=>{const code=String(r
 app.get('/api/admin/orders',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Order list ရယူ၍မရပါ။'});}});
 app.get('/api/admin/payments',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT p.id,p.order_id,p.method,p.reference,p.amount,p.paid_date,p.paid_time,p.reference_last6,p.status,p.admin_note,p.submitted_at,p.reviewed_at,(p.receipt_data IS NOT NULL) AS has_receipt,o.order_code,o.customer_name,o.phone FROM payments p JOIN orders o ON o.id=p.order_id ORDER BY p.submitted_at DESC LIMIT 500')).rows);}catch{res.status(500).json({error:'Payment list ရယူ၍မရပါ။'});}});
 app.get('/api/admin/payments/:id/receipt',requireAdmin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment ID မမှန်ပါ။'});try{const row=(await pool.query('SELECT receipt_mime_type,receipt_data FROM payments WHERE id=$1',[id])).rows[0];const extensions={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'};const extension=extensions[row?.receipt_mime_type];if(!row?.receipt_data||!extension)return res.status(404).json({error:'ပြေစာပုံ မတွေ့ပါ။'});const data=Buffer.isBuffer(row.receipt_data)?row.receipt_data:Buffer.from(row.receipt_data);res.setHeader('Content-Type',row.receipt_mime_type);res.setHeader('Content-Length',String(data.length));res.setHeader('Content-Disposition','inline; filename="payment-receipt-'+id+'.'+extension+'"');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");return res.status(200).send(data);}catch{return res.status(500).json({error:'ပြေစာပုံ ရယူ၍မရပါ။'});}});
-app.patch('/api/admin/orders/:id/status',requireAdmin,sameOrigin,async(req,res)=>{const allowed=['pending','reviewing','approved','rejected','completed'];if(!allowed.includes(req.body.status))return res.status(400).json({error:'Status မမှန်ပါ။'});try{const r=await pool.query('UPDATE orders SET status=$1,updated_at=now() WHERE id=$2 RETURNING *',[req.body.status,req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Order မတွေ့ပါ။'});res.json(r.rows[0]);}catch{res.status(500).json({error:'Order status ပြင်ဆင်၍မရပါ။'});}});
+app.patch('/api/admin/orders/:id/status',requireAdmin,sameOrigin,async(req,res)=>{
+ const id=String(req.params.id||'').trim();
+ if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))return res.status(400).json({error:'Order ID မမှန်ပါ။'});
+ const nextStatus=req.body?.status;
+ if(typeof nextStatus!=='string')return res.status(400).json({error:'Order Status မမှန်ပါ။'});
+ const client=await pool.connect();
+ let transactionOpen=false;
+ try{
+  await client.query('BEGIN');
+  transactionOpen=true;
+  const order=(await client.query('SELECT id,status,payment_status FROM orders WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  if(!order){await client.query('ROLLBACK');transactionOpen=false;return res.status(404).json({error:'Order မတွေ့ပါ။'});}
+  const transition=validateOrderStatusTransition(order.status,nextStatus,order.payment_status);
+  if(!transition.ok){await client.query('ROLLBACK');transactionOpen=false;return res.status(transition.code).json({error:transition.error});}
+  if(transition.unchanged){await client.query('COMMIT');transactionOpen=false;return res.json({ok:true,id:order.id,status:order.status,unchanged:true});}
+  const updated=(await client.query('UPDATE orders SET status=$1,updated_at=now() WHERE id=$2 RETURNING id,status,payment_status,updated_at',[transition.value,id])).rows[0];
+  await client.query('COMMIT');
+  transactionOpen=false;
+  return res.json(updated);
+ }catch{
+  if(transactionOpen){try{await client.query('ROLLBACK');}catch{}}
+  return res.status(500).json({error:'Order အခြေအနေ ပြင်ဆင်၍မရပါ။'});
+ }finally{client.release();}
+});
 app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res)=>{
  if(!['approved','rejected'].includes(req.body.status))return res.status(400).json({error:'Payment review status မမှန်ပါ။'});
  const client=await pool.connect();
