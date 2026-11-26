@@ -85,7 +85,9 @@ Manual alternative:
 - Admin service/package create and update endpoints validate trimmed text fields, lowercase slug format, icon size, active flag type, 1–25 packages, duplicate package names, package descriptions, and nonnegative Kyat prices with at most two decimals within the PostgreSQL numeric range. Invalid input returns HTTP 400 before the database write.
 - Payment input is validated server-side, including supported payment method, transaction reference, six receipt digits, and valid date/time.
 - `npm test` covers database health behavior, proxy configuration, request-cookie parsing, same-origin validation, service/package input, payment input, payment-receipt image validation, and PostgreSQL backup/restore command safety.
-- GitHub Actions runs `npm ci`, `npm run check`, and `npm test` on pushes and pull requests to `main`.
+- `test/postgres.integration.test.js` starts the real Express server against a dedicated local `htet_kabar_test` database and verifies catalog/order price integrity, phone-protected tracking, admin-cookie/CSRF checks, private receipt access, manual payment approval/rejection/resubmission, and order-state gates. It is skipped locally unless `RUN_DB_INTEGRATION_TESTS=1` and a local `TEST_DATABASE_URL` are supplied.
+- GitHub Actions starts a disposable PostgreSQL 16 service for each validation run, then runs `npm ci`, `npm run check`, and the complete `npm test` suite. The integration suite refuses non-local hosts or any database name other than `htet_kabar_test`; it never connects to the Render production database.
+- To run the integration suite locally, create a disposable PostgreSQL database named `htet_kabar_test`, configure a local connection URL, set `RUN_DB_INTEGRATION_TESTS=1` and `TEST_DATABASE_URL`, then run `npm test`. Do not point this variable at production or a shared customer database.
 - `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
 - Unit tests and syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
 
