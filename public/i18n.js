@@ -173,8 +173,8 @@ Object.keys(toEnglish).forEach(function(key){const value=toEnglish[key];if(!Obje
 function normalizeLanguage(value){return String(value||'').toLowerCase()==='en'?'en':'my';}
 function translateText(value,language){
  const source=String(value==null?'':value);
- const leading=(source.match(/^\\s*/u)||[''])[0];
- const trailing=(source.match(/\\s*$/u)||[''])[0];
+ const leading=(source.match(/^\s*/u)||[''])[0];
+ const trailing=(source.match(/\s*$/u)||[''])[0];
  const core=source.slice(leading.length,source.length-trailing.length);
  if(!core)return source;
  const table=normalizeLanguage(language)==='en'?toEnglish:toBurmese;
