@@ -49,3 +49,8 @@ body.admin-route .admin-route-control{display:inline-flex!important}
 .customer-avatar{width:42px;height:42px;border-radius:50%;object-fit:cover}
 
 .review-buttons a{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:6px;padding:7px 9px;color:var(--accent);text-decoration:none;font-size:12px}
+
+
+/* Language switch and keyboard focus visibility */
+.language-toggle{min-width:88px}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
