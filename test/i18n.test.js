@@ -20,8 +20,11 @@ test('formats prices using the active language',()=>{
  assert.equal(formatCurrency(25000,'en'),'25,000 MMK');
 });
 test('covers customer, payment and admin workflows',()=>{
- assert.ok(Object.keys(translations).length>=100);
+ assert.ok(Object.keys(translations).length>=150);
  assert.equal(translateText('Payment Account အသစ်ထည့် / ပြင်ဆင်ရန်','en'),'Add / edit payment account');
  assert.equal(translateText('Order အောင်မြင်ပါပြီ။ Code:','en'),'Order created successfully. Code:');
  assert.equal(translateText('အော်ဒါများ','en'),'Orders');
+ assert.equal(translateText('Order စစ်ဆေးမှုများလွန်းပါသည်။ ၁၅ မိနစ်အကြာ ပြန်ကြိုးစားပါ။','en'),'Too many order lookups. Please try again in 15 minutes.');
+ assert.equal(translateText('pending','my'),'ဆိုင်းငံ့');
+ assert.equal(translateText('Approve','my'),'အတည်ပြုရန်');
 });

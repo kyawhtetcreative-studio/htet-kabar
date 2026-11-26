@@ -164,7 +164,7 @@ The server does not contain a default password and never prints one.
 ## Burmese and English interface
 - The top navigation language switch changes the customer and admin interface between Burmese (my) and English (en).
 - The selected language is stored in the browser as htet-kabar-language and restored on the next visit.
-- Existing client-side form messages and labels are translated as they are rendered; prices use ကျပ် in Burmese and MMK in English.
+- Server-returned Burmese errors and existing client-side form messages/labels are translated as they are rendered; prices use ကျပ် in Burmese and MMK in English.
 - Translation is exact-match and text-node based. Customer-entered names, project briefs, payment account details, and admin-authored announcements are not sent to a translation service or rewritten.
 - Add new interface copy to public/i18n.js and cover it with test/i18n.test.js. The module also updates the document language and social locale metadata.
 - The service worker caches /i18n.js; bump its cache version whenever frontend assets change.
