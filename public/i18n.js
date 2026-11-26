@@ -5,7 +5,7 @@ if(typeof module==='object'&&module.exports)module.exports=api;
 if(root){root.HtetKabarI18n=api;if(root.document){let storage;try{storage=root.localStorage;}catch(_){}api.init(root.document,storage);}}
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
 'use strict';
-// Exact UI-copy translations only; customer-entered data is intentionally unchanged.
+// Only exact dictionary matches are translated; no external translation API is used.
 const toEnglish=Object.freeze({
 'ဂရပ်ဖစ်ဒီဇိုင်း':'Graphic Design',
 'Logo၊ Poster၊ Banner၊ Social Media Design၊ Branding နှင့် ကြော်ငြာဒီဇိုင်းများ။':'Logo, poster, banner, social media design, branding and advertising design.',
