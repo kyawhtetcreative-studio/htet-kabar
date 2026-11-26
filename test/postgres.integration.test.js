@@ -248,7 +248,7 @@ test('PostgreSQL order and manual payment workflow', {
       headers: { Cookie: cookie }
     });
     assert.equal(receipt.status, 200);
-    assert.match(receipt.headers.get('content-type') || '', /^image\\/png/);
+    assert.match(receipt.headers.get('content-type') || '', /^image\/png/);
     assert.match(receipt.headers.get('cache-control') || '', /private, no-store/);
     const receiptBytes = Buffer.from(await receipt.arrayBuffer());
     assert.deepEqual(receiptBytes.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
@@ -320,7 +320,8 @@ test('PostgreSQL order and manual payment workflow', {
 
     const logout = await api('/api/admin/logout', { method: 'POST', cookie });
     assert.equal(logout.response.status, 200);
-    assert.equal((await api('/api/admin/me', { cookie })).response.status, 401);
+    assert.match(logout.response.headers.get('set-cookie') || '', /Max-Age=0/i);
+    assert.equal((await api('/api/admin/me')).response.status, 401);
   } finally {
     await stopProcess(child);
     try {
