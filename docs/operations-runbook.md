@@ -45,7 +45,7 @@ After the backend is deployed, configure the Render health-check path as `/api/h
 
 ## Local validation
 
-Use Node.js 20 (or a supported newer LTS) and run:
+Use Node.js 24 LTS (matching the PR CI configuration) and run:
 
 ```powershell
 npm ci
@@ -53,7 +53,7 @@ npm run check
 npm test
 ```
 
-The latest verified GitHub Actions run for PR #1 (run #83, 2026-11-25) completed `npm ci`, `npm run check`, and `npm test` successfully: **71 tests passed, 0 failed**. CI success does not prove that the deployed service can connect to the live database.
+The latest verified GitHub Actions run for PR #1 (run #94, 2026-11-27) completed `npm ci`, `npm run check`, and `npm test` successfully on Node.js 24 LTS: **77 tests passed, 0 failed, 0 skipped**. The workflow starts an ephemeral PostgreSQL 16 service and runs the integration test only against the dedicated local `htet_kabar_test` database; this does not verify connectivity to the Render production database.
 
 ## Backup and recovery
 
