@@ -146,6 +146,12 @@ test('PostgreSQL order and manual payment workflow', {
     assert.equal((await api('/api/admin/me', { cookie })).response.status, 200);
     adminId = (await pool.query('SELECT id FROM admins WHERE email=$1',[email])).rows[0].id;
     assert.equal((await api('/api/admin/audit-logs?limit=101', { cookie })).response.status, 400);
+    const invalidReviewId = await api('/api/admin/payments/not-a-number/review', { method: 'PATCH', cookie, body: { status: 'approved' } });
+    assert.equal(invalidReviewId.response.status, 400);
+    const invalidReviewNote = await api('/api/admin/payments/1/review', { method: 'PATCH', cookie, body: { status: 'approved', note: { unexpected: true } } });
+    assert.equal(invalidReviewNote.response.status, 400);
+    const nullReviewBody = await api('/api/admin/payments/1/review', { method: 'PATCH', cookie, body: null });
+    assert.equal(nullReviewBody.response.status, 400);
 
     const csrf = await api('/api/admin/payment-accounts', {
       method: 'POST',
@@ -235,12 +241,18 @@ test('PostgreSQL order and manual payment workflow', {
     assert.equal(reviewing.response.status, 200, reviewing.raw);
     const orderAuditAfterReviewing = await api('/api/admin/audit-logs?limit=100', { cookie });
     assert.equal(orderAuditAfterReviewing.response.status, 200);
+    assert.match(orderAuditAfterReviewing.response.headers.get('cache-control') || '', /private, no-store/i);
     const reviewingEvent = orderAuditAfterReviewing.data.find(item => item.action === 'order.status_changed' && item.entity_id === orderId);
     assert.ok(reviewingEvent, 'Order status change should create an audit entry.');
     assert.equal(reviewingEvent.admin_id, adminId);
     assert.equal(reviewingEvent.before_state.status, 'pending');
     assert.equal(reviewingEvent.after_state.status, 'reviewing');
     assert.equal(Object.hasOwn(reviewingEvent, 'phone'), false);
+    const repeatedReviewing = await api('/api/admin/orders/' + orderId + '/status', { method: 'PATCH', cookie, body: { status: 'reviewing' } });
+    assert.equal(repeatedReviewing.response.status, 200);
+    assert.equal(repeatedReviewing.data.unchanged, true);
+    const auditAfterNoop = await api('/api/admin/audit-logs?limit=100', { cookie });
+    assert.equal(auditAfterNoop.data.filter(item => item.action === 'order.status_changed' && item.entity_id === orderId).length, 1);
 
     const paymentSubmit = await submitPayment(code, method, 'CI-' + suffix, 'data:image/png;base64,' + pngFixture);
     assert.equal(paymentSubmit.response.status, 201, paymentSubmit.raw);
