@@ -7,6 +7,12 @@ if(root){root.HtetKabarI18n=api;if(root.document){let storage;try{storage=root.l
 'use strict';
 // Only exact dictionary matches are translated; no external translation API is used.
 const toEnglish=Object.freeze({
+'စီမံခန့်ခွဲမှု မှတ်တမ်း':'Admin Activity Log',
+'မှတ်တမ်းမရှိသေးပါ။':'No activity records yet.',
+'ငွေပေးချေမှု စစ်ဆေးခြင်း':'Payment review',
+'Order အခြေအနေ ပြောင်းလဲခြင်း':'Order status changed',
+'အရင်:':'Before:',
+'နောက်:':'After:',
 'ဂရပ်ဖစ်ဒီဇိုင်း':'Graphic Design',
 'Logo၊ Poster၊ Banner၊ Social Media Design၊ Branding နှင့် ကြော်ငြာဒီဇိုင်းများ။':'Logo, poster, banner, social media design, branding and advertising design.',
 'ဒီဇိုင်းတစ်ခု၊ ပြင်ဆင်မှု ၂ ကြိမ်':'One design with two revisions.',

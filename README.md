@@ -7,7 +7,7 @@ Burmese-language digital services catalog, customer order/payment submission, tr
 - Customer order submission with server-side service/package/price validation
 - Manual payment details and transaction reference submission (payments are not automatically verified)
 - Order tracking using order code + phone number
-- Admin authentication, service/package and payment-account management, site settings, order review, and payment approve/reject
+- Admin authentication, service/package and payment-account management, site settings, order review, payment approve/reject, and an admin-only audit trail
 - PostgreSQL persistence, bcrypt password hashes, expiring HttpOnly admin cookies, login/order/payment rate limits, security headers, and same-origin checks on cookie-authenticated requests
 - Local PostgreSQL custom-format backup and guarded restore utilities
 
@@ -54,7 +54,7 @@ Manual alternative:
 - `POST /api/admin/login`, `POST /api/admin/logout`, `GET /api/admin/me`
 - Admin services: `GET/POST /api/admin/services`, `PUT/DELETE /api/admin/services/:id`
 - Admin payment accounts: `GET/POST /api/admin/payment-accounts`, `PUT/DELETE /api/admin/payment-accounts/:id`
-- Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `GET /api/admin/payments/:id/receipt` (admin-only), `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
+- Admin orders/payments: `GET /api/admin/orders`, `GET /api/admin/payments`, `GET /api/admin/audit-logs?limit=50`, `GET /api/admin/payments/:id/receipt` (admin-only), `PATCH /api/admin/orders/:id/status`, `PATCH /api/admin/payments/:id/review`
 - Admin settings: `GET/PUT /api/admin/site-settings`
 
 ## Order status workflow
@@ -90,6 +90,12 @@ Manual alternative:
 - To run the integration suite locally, create a disposable PostgreSQL database named `htet_kabar_test`, configure a local connection URL, set `RUN_DB_INTEGRATION_TESTS=1` and `TEST_DATABASE_URL`, then run `npm test`. Do not point this variable at production or a shared customer database.
 - `/api/health` executes `SELECT 1` and returns HTTP 503 with a generic database-unavailable response if the query fails; it does not disclose connection details.
 - Unit tests and syntax checks are not a substitute for an end-to-end test against a configured PostgreSQL database and deployed service.
+
+## Admin audit trail
+- Admin payment approvals/rejections and order-status changes are written to `admin_audit_logs` in the same PostgreSQL transaction as the state change. If the audit insert fails, the state change rolls back too.
+- Each entry records the admin ID, action, entity type/ID, previous and resulting state, optional review note, and timestamp. It deliberately excludes customer phone numbers, transaction references, receipt bytes, cookies, and tokens.
+- The append-only feed is available only to authenticated admins at `GET /api/admin/audit-logs?limit=50`; the limit is bounded to 1–100 and responses are private/no-store.
+- Existing databases create the table idempotently at application startup. For manually-managed SQL installations, run `database/migrations/005_admin_audit_logs.sql` after migrations 001–004.
 
 ## Payment receipt storage
 - Receipt images are optional and limited to 1MB in PNG, JPEG, or WebP format. Server-side validation checks canonical base64 and the matching file signature before writing the image to PostgreSQL `BYTEA` columns.
@@ -137,7 +143,7 @@ Remove-Item Env:ALLOW_DATABASE_RESTORE
 - Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
 
 ## Supabase setup (optional alternative)
-1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, `database/migrations/003_payment_accounts.sql`, then `database/migrations/004_payment_receipts.sql`. These migrations add the admin, payment integrity, payment account, and optional receipt-storage structures without deleting or truncating existing orders, payments, customers, or services. The payment integrity migration prevents an order from having more than one pending payment record.
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, `database/migrations/003_payment_accounts.sql`, `database/migrations/004_payment_receipts.sql`, then `database/migrations/005_admin_audit_logs.sql`. These migrations add the admin, payment integrity, payment account, and optional receipt-storage structures without deleting or truncating existing orders, payments, customers, or services. The payment integrity migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
 4. Set `NODE_ENV=production`.

@@ -57,6 +57,7 @@ test('PostgreSQL order and manual payment workflow', {
   const orderCodes = [];
   let serviceId = null;
   let createdAccountId = null;
+  let adminId = null;
   let cookie = null;
   let output = '';
 
@@ -130,6 +131,7 @@ test('PostgreSQL order and manual payment workflow', {
 
     const anonymous = await api('/api/admin/orders');
     assert.equal(anonymous.response.status, 401);
+    assert.equal((await api('/api/admin/audit-logs')).response.status, 401);
 
     const login = await api('/api/admin/login', {
       method: 'POST', body: { email, password }
@@ -142,6 +144,8 @@ test('PostgreSQL order and manual payment workflow', {
     cookie = setCookie.split(';', 1)[0];
     assert.match(cookie, /^hk_admin=/);
     assert.equal((await api('/api/admin/me', { cookie })).response.status, 200);
+    adminId = (await pool.query('SELECT id FROM admins WHERE email=$1',[email])).rows[0].id;
+    assert.equal((await api('/api/admin/audit-logs?limit=101', { cookie })).response.status, 400);
 
     const csrf = await api('/api/admin/payment-accounts', {
       method: 'POST',
@@ -229,6 +233,14 @@ test('PostgreSQL order and manual payment workflow', {
       method: 'PATCH', cookie, body: { status: 'reviewing' }
     });
     assert.equal(reviewing.response.status, 200, reviewing.raw);
+    const orderAuditAfterReviewing = await api('/api/admin/audit-logs?limit=100', { cookie });
+    assert.equal(orderAuditAfterReviewing.response.status, 200);
+    const reviewingEvent = orderAuditAfterReviewing.data.find(item => item.action === 'order.status_changed' && item.entity_id === orderId);
+    assert.ok(reviewingEvent, 'Order status change should create an audit entry.');
+    assert.equal(reviewingEvent.admin_id, adminId);
+    assert.equal(reviewingEvent.before_state.status, 'pending');
+    assert.equal(reviewingEvent.after_state.status, 'reviewing');
+    assert.equal(Object.hasOwn(reviewingEvent, 'phone'), false);
 
     const paymentSubmit = await submitPayment(code, method, 'CI-' + suffix, 'data:image/png;base64,' + pngFixture);
     assert.equal(paymentSubmit.response.status, 201, paymentSubmit.raw);
@@ -264,6 +276,17 @@ test('PostgreSQL order and manual payment workflow', {
     });
     assert.equal(paymentApproval.response.status, 200, paymentApproval.raw);
     assert.equal(paymentApproval.data.status, 'approved');
+    const paymentAuditResponse = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const paymentApprovalEvent = paymentAuditResponse.data.find(item => item.action === 'payment.reviewed' && item.entity_id === String(payment.id));
+    assert.ok(paymentApprovalEvent, 'Payment review should create an audit entry.');
+    assert.equal(paymentApprovalEvent.admin_id, adminId);
+    assert.equal(paymentApprovalEvent.before_state.status, 'pending');
+    assert.equal(paymentApprovalEvent.before_state.order_payment_status, 'submitted');
+    assert.equal(paymentApprovalEvent.after_state.status, 'approved');
+    assert.equal(paymentApprovalEvent.after_state.order_payment_status, 'paid');
+    assert.equal(paymentApprovalEvent.note, 'Manual approval integration test.');
+    assert.equal(Object.hasOwn(paymentApprovalEvent, 'reference'), false);
+    assert.equal(Object.hasOwn(paymentApprovalEvent, 'receipt_data'), false);
 
     const approved = await api('/api/admin/orders/' + orderId + '/status', {
       method: 'PATCH', cookie, body: { status: 'approved' }
@@ -281,6 +304,8 @@ test('PostgreSQL order and manual payment workflow', {
     const completedTracking = await api('/api/orders/' + code + '?phone=' + encodeURIComponent(phone));
     assert.equal(completedTracking.data.status, 'completed');
     assert.equal(completedTracking.data.payment_status, 'paid');
+    const completedAuditResponse = await api('/api/admin/audit-logs?limit=100', { cookie });
+    assert.ok(completedAuditResponse.data.some(item => item.action === 'order.status_changed' && item.entity_id === orderId && item.after_state.status === 'completed'));
 
     const secondOrder = await api('/api/orders', {
       method: 'POST',
@@ -302,6 +327,11 @@ test('PostgreSQL order and manual payment workflow', {
       method: 'PATCH', cookie, body: { status: 'rejected', note: 'Test rejection.' }
     });
     assert.equal(rejected.response.status, 200, rejected.raw);
+    const rejectedAuditResponse = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const rejectedPaymentEvent = rejectedAuditResponse.data.find(item => item.action === 'payment.reviewed' && item.entity_id === String(secondPayment.id));
+    assert.ok(rejectedPaymentEvent);
+    assert.equal(rejectedPaymentEvent.after_state.status, 'rejected');
+    assert.equal(rejectedPaymentEvent.after_state.order_payment_status, 'rejected');
     const rejectedOrder = await pool.query('SELECT payment_status FROM orders WHERE order_code = $1', [secondOrder.data.order_code]);
     assert.equal(rejectedOrder.rows[0].payment_status, 'rejected');
 
@@ -328,6 +358,7 @@ test('PostgreSQL order and manual payment workflow', {
       if (orderCodes.length) await pool.query('DELETE FROM orders WHERE order_code = ANY($1::text[])', [orderCodes]);
       if (serviceId) await pool.query('DELETE FROM services WHERE id = $1', [serviceId]);
       if (createdAccountId) await pool.query('DELETE FROM payment_accounts WHERE id = $1', [createdAccountId]);
+      if (adminId) await pool.query('DELETE FROM admin_audit_logs WHERE admin_id = $1', [adminId]);
       await pool.query('DELETE FROM admins WHERE email = $1', [email]);
     } catch {
       // The CI database is disposable; cleanup must never target a non-test database.
