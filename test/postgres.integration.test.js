@@ -7,6 +7,7 @@ const { createServer } = require('node:net');
 const { randomBytes } = require('node:crypto');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { runMigrations } = require('../lib/migrations');
 
 const root = path.resolve(__dirname, '..');
 const enabled = process.env.RUN_DB_INTEGRATION_TESTS === '1';
@@ -129,6 +130,13 @@ test('PostgreSQL order and manual payment workflow', {
 
   try {
     await waitForHealth();
+
+    const migrationRows = await pool.query('SELECT version, filename, checksum FROM schema_migrations ORDER BY version');
+    assert.deepEqual(migrationRows.rows.map(row => Number(row.version)), [1, 2, 3, 4, 5, 6]);
+    assert.ok(migrationRows.rows.every(row => /^[a-f0-9]{64}$/.test(row.checksum)));
+    const migrationRerun = await runMigrations(pool);
+    assert.deepEqual(migrationRerun.applied, []);
+    assert.equal(migrationRerun.skipped.length, 6);
 
     const anonymous = await api('/api/admin/orders');
     assert.equal(anonymous.response.status, 401);

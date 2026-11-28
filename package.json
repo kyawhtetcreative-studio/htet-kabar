@@ -6,13 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check public/i18n.js && node --check test/i18n.test.js && node --check public/app.js && node --check scripts/admin-account.js && node --check scripts/db-backup.js && node --check scripts/db-restore.js && node --check scripts/deployment-preflight.js && node --check lib/deployment-preflight.js && node --check test/deployment-preflight.test.js && node --check lib/service-validation.js && node --check lib/payment-validation.js && node --check lib/request-security.js && node --check lib/health.js && node --check lib/proxy-settings.js && node --check lib/postgres-cli.js && node --check lib/payment-account-validation.js && node --check lib/payment-receipt.js && node --check lib/order-status.js && node --check test/postgres.integration.test.js",
+    "check": "node --check server.js && node --check lib/migrations.js && node --check scripts/db-migrate.js && node --check test/migrations.test.js && node --check public/i18n.js && node --check test/i18n.test.js && node --check public/app.js && node --check scripts/admin-account.js && node --check scripts/db-backup.js && node --check scripts/db-restore.js && node --check scripts/deployment-preflight.js && node --check lib/deployment-preflight.js && node --check test/deployment-preflight.test.js && node --check lib/service-validation.js && node --check lib/payment-validation.js && node --check lib/request-security.js && node --check lib/health.js && node --check lib/proxy-settings.js && node --check lib/postgres-cli.js && node --check lib/payment-account-validation.js && node --check lib/payment-receipt.js && node --check lib/order-status.js && node --check test/postgres.integration.test.js",
     "test": "node --test",
     "preflight:production": "node scripts/deployment-preflight.js",
     "admin:setup": "node scripts/admin-account.js setup",
     "admin:reset": "node scripts/admin-account.js reset",
     "db:backup": "node scripts/db-backup.js",
-    "db:restore": "node scripts/db-restore.js"
+    "db:restore": "node scripts/db-restore.js",
+    "db:migrate": "node scripts/db-migrate.js"
   },
   "engines": {
     "node": ">=18"

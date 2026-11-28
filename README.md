@@ -68,7 +68,7 @@ Manual alternative:
 - Admins can add, edit, enable, and disable KBZPay, UAB Pay, and AYA Bank accounts from the Admin Dashboard. Only one account per method can be active at a time.
 - Public API responses include only active accounts and the fields needed for payment instructions. All account mutations require admin authentication and a same-origin request.
 - The server accepts a payment submission only when an active account exists for the selected method. Payment verification remains manual.
-- The application creates the `payment_accounts` table at startup if it does not exist. The equivalent idempotent SQL is available at `database/migrations/003_payment_accounts.sql`; run it after migrations 001 and 002 on manually-managed PostgreSQL/Supabase installations.
+- The numbered SQL migrations are applied and checksum-verified at server startup. The migration runner creates `payment_accounts` through `database/migrations/003_payment_accounts.sql`; see Database migrations below for the version ledger and manual command.
 - After deployment, sign in at `/admin` and add/confirm the current receiving account details. Until at least one active account is configured, customers see a setup message and cannot submit payment details.
 
 ## Payment submission validation
@@ -79,6 +79,16 @@ Manual alternative:
 - Receipt bytes are excluded from payment-list and payment-review JSON responses. Only authenticated admins can view a receipt through `GET /api/admin/payments/:id/receipt`; the route sends a private, non-cacheable image response with `nosniff`.
 - PostgreSQL backups include receipt images because they are stored in the `payments` table. Keep backups encrypted and access-controlled; receipt storage increases database size.
 - Payment verification remains manual. A receipt image or transaction reference is submitted evidence only and never triggers automatic approval.
+
+## Database migrations
+
+- The server applies the numbered SQL files in database/migrations before opening its HTTP listener. Startup fails closed if a migration fails.
+- PostgreSQL table schema_migrations records each numeric version, immutable filename, SHA-256 checksum, and application timestamp.
+- A PostgreSQL session advisory lock prevents concurrent server instances or CLI runs from applying the same migration at the same time. Each migration and its ledger record commit in one transaction.
+- Existing databases without a migration ledger are reconciled by the idempotent migrations 001–006; existing rows are not intentionally deleted or truncated.
+- Run npm run db:migrate to apply pending migrations explicitly to the database in DATABASE_URL. Confirm the target database and take a verified backup before using this command against any live environment.
+- Never edit or rename an applied migration. Add the next numbered SQL file instead; a checksum mismatch stops startup and requires a new forward migration.
+- GitHub Actions verifies the runner against an isolated PostgreSQL test database. This does not apply migrations to the Render production database.
 
 ## Validation
 - `npm run check` runs syntax checks for the server, browser app, admin and database scripts, and all shared validation/security modules.

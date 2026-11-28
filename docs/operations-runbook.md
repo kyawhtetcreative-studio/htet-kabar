@@ -78,6 +78,16 @@ npm test
 
 The latest verified GitHub Actions run for this milestone is run [#114](https://github.com/kyawhtetcreative-studio/htet-kabar/actions/runs/46107738245) on 2026-11-28: `npm ci`, `npm run check`, and `npm test` passed with **83 passed, 0 failed, 0 skipped**. The integration suite covers service and payment-account audit entries against an ephemeral PostgreSQL 16 service and never connects to the Render production database.
 
+## Database migration tracking
+
+- The server applies the numbered files in database/migrations before opening the HTTP listener. A migration failure stops startup; the application does not serve API traffic with a partially migrated schema.
+- The runner stores version, filename, SHA-256 checksum, and applied_at in PostgreSQL table schema_migrations.
+- A session-level PostgreSQL advisory lock serializes migration runs across server instances and the CLI. Each migration and its ledger entry are committed in one transaction.
+- Existing databases that have no ledger will run the idempotent migrations 001–006 once and then record their checksums. The runner does not drop tables or truncate customer/order/payment data.
+- To apply pending migrations manually, run npm run db:migrate with DATABASE_URL set in an untracked local .env. Confirm the target database first. For production, take and verify a backup and obtain release approval before running this command.
+- Never edit or rename a migration after it has been recorded. Add a new, higher-numbered migration; checksum drift or a missing applied file causes startup to fail with an actionable error.
+- The integration test confirms all six current migrations are recorded and a second run skips them. CI uses only its disposable PostgreSQL database, never the Render database.
+
 ## Backup and recovery
 
 The PR adds:
@@ -119,6 +129,7 @@ Before a production release:
 - [ ] `DATABASE_URL` uses the Internal Database URL and `JWT_SECRET` is present and sufficiently random.
 - [ ] Admin account seeding is understood; existing credentials are not overwritten.
 - [ ] `npm run preflight:production`, `npm run check`, and `npm test` pass on the exact release commit.
+- [ ] `schema_migrations` contains all expected versions and the runner reports no checksum drift.
 - [ ] Database backup is created, stored securely, and its archive listing is verified.
 - [ ] A restore rehearsal has succeeded on a separate test database.
 - [ ] Render health check is set to `/api/health`.
