@@ -286,21 +286,36 @@ async function ensureOrderTables(){
  CREATE TABLE IF NOT EXISTS admin_audit_logs(
   id BIGSERIAL PRIMARY KEY,
   admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-  action TEXT NOT NULL CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled')),
-  entity_type TEXT NOT NULL CHECK(entity_type IN ('order','payment','service','payment_account')),
+  action TEXT NOT NULL CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled')),
+  entity_type TEXT NOT NULL CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account')),
   entity_id TEXT NOT NULL CHECK(char_length(entity_id) BETWEEN 1 AND 64),
   before_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   after_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   note TEXT NOT NULL DEFAULT '' CHECK(char_length(note)<=500),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'))
+  CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'))
  );
- ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_action_check;
- ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_entity_type_check;
- ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_check;
- ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled'));
- ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account'));
- ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'));
+ DO $$
+ BEGIN
+  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_action_check' AND position('service.created' in pg_get_constraintdef(oid))=0) THEN
+   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_action_check;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_action_check') THEN
+   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled'));
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_type_check' AND position('payment_account' in pg_get_constraintdef(oid))=0) THEN
+   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_entity_type_check;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_type_check') THEN
+   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account'));
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_check' AND position('service.%' in pg_get_constraintdef(oid))=0) THEN
+   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_check;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_action_check') THEN
+   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'));
+  END IF;
+ END $$;
  CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(id DESC);
  CREATE INDEX IF NOT EXISTS admin_audit_logs_entity_idx ON admin_audit_logs(entity_type,entity_id,id DESC);
 `);
