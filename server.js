@@ -68,6 +68,50 @@ function requireAdmin(req,res,next){const token=req.cookies.hk_admin;if(!token)r
 function sameOrigin(req,res,next){const check=checkOrigin(req.get('origin'),req.get('host'),req.protocol);if(!check.ok){const messages={missing:'Origin header လိုအပ်ပါသည်။',invalid:'Origin မမှန်ပါ။',mismatch:'Cross-origin request ပိတ်ထားပါသည်။'};return res.status(403).json({error:messages[check.reason]||'Origin မမှန်ပါ။'});}next();}
 function publicService(s){return {...s,packages:typeof s.packages==='string'?JSON.parse(s.packages):s.packages};}
 
+function auditServiceState(row){
+ if(!row)return {};
+ const packages=typeof row.packages==='string'?JSON.parse(row.packages):row.packages;
+ return {
+  name:row.name,slug:row.slug,icon:row.icon,description:row.description,
+  active:Boolean(row.active),
+  packages:Array.isArray(packages)?packages.map(item=>({name:item.name,description:item.description||'',price:item.price})):[],
+ };
+}
+function auditPaymentAccountState(row){
+ if(!row)return {};
+ const compact=String(row.account_number||'').replace(/\\s+/g,'');
+ return {
+  method:row.method,account_name:row.account_name,
+  account_number_last4:compact.length>=4?compact.slice(-4):'***',
+  instructions:row.instructions||'',active:Boolean(row.active),display_order:Number(row.display_order),
+ };
+}
+async function runAdminTransaction(work){
+ const client=await pool.connect();
+ let open=false;
+ try{
+  await client.query('BEGIN');open=true;
+  const result=await work(client);
+  await client.query('COMMIT');open=false;
+  return result;
+ }catch(error){
+  if(open){try{await client.query('ROLLBACK');}catch{}}
+  throw error;
+ }finally{client.release();}
+}
+async function insertAdminAuditLog(client,adminId,action,entityType,entityId,beforeState,afterState){
+ await client.query(
+  'INSERT INTO admin_audit_logs(admin_id,action,entity_type,entity_id,before_state,after_state,note) VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)',
+  [adminId,action,entityType,String(entityId),JSON.stringify(beforeState||{}),JSON.stringify(afterState||{}),'']
+ );
+}
+function adminMutationError(status,message){const error=new Error(message);error.httpStatus=status;return error;}
+function sendAdminMutationError(res,error,fallback,conflictMessage){
+ if(error&&error.httpStatus)return res.status(error.httpStatus).json({error:error.message});
+ if(error&&error.code==='23505')return res.status(409).json({error:conflictMessage});
+ return res.status(500).json({error:fallback});
+}
+
 // Customer Google OAuth (credentials are supplied only through deployment environment variables)
 const customerAuthLimit=rateLimit({windowMs:15*60*1000,limit:20,standardHeaders:true,legacyHeaders:false});
 function cookieOpts(maxAge){return `HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.NODE_ENV==='production'?'; Secure':''}`;}
@@ -107,37 +151,119 @@ app.post('/api/admin/login',sameOrigin,loginLimit,async(req,res)=>{try{const ema
 app.post('/api/admin/logout',sameOrigin,(req,res)=>{res.setHeader('Set-Cookie',`hk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV==='production'?'; Secure':''}`);res.setHeader('Cache-Control','no-store');res.json({ok:true});});
 app.get('/api/admin/me',requireAdmin,(req,res)=>res.json({ok:true,email:req.admin.email}));
 app.get('/api/admin/services',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT * FROM services ORDER BY id')).rows.map(publicService));}catch{res.status(500).json({error:'Admin service list မရပါ။'});}});
+
 app.post('/api/admin/services',requireAdmin,sameOrigin,async(req,res)=>{
  const validation=validateServiceInput(req.body);
  if(!validation.ok)return res.status(400).json({error:validation.error});
- const s=validation.value;
+ const value=validation.value;
  try{
-  const r=await pool.query('INSERT INTO services(name,slug,icon,description,active,packages) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[s.name,s.slug,s.icon,s.description,s.active,JSON.stringify(s.packages)]);
-  res.status(201).json(publicService(r.rows[0]));
- }catch{
-  res.status(409).json({error:'Slug ထပ်နေခြင်း သို့မဟုတ် သိမ်းဆည်းမှု မအောင်မြင်ပါ။'});
+  const row=await runAdminTransaction(async client=>{
+   const result=await client.query('INSERT INTO services(name,slug,icon,description,active,packages) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[value.name,value.slug,value.icon,value.description,value.active,JSON.stringify(value.packages)]);
+   const created=result.rows[0];
+   await insertAdminAuditLog(client,req.admin.adminId,'service.created','service',created.id,{},auditServiceState(created));
+   return created;
+  });
+  return res.status(201).json(publicService(row));
+ }catch(error){
+  return sendAdminMutationError(res,error,'Service သိမ်းဆည်းမှု မအောင်မြင်ပါ။','Slug ထပ်နေခြင်း ဖြစ်နိုင်ပါသည်။');
  }
 });
 app.put('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{
  const validation=validateServiceInput(req.body);
  if(!validation.ok)return res.status(400).json({error:validation.error});
- const s=validation.value;
+ const value=validation.value,id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Service ID မမှန်ပါ။'});
+ try{
+  const row=await runAdminTransaction(async client=>{
+   const current=(await client.query('SELECT * FROM services WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!current)throw adminMutationError(404,'Service မတွေ့ပါ။');
+   const before=auditServiceState(current);
+   const updated=(await client.query('UPDATE services SET name=$1,slug=$2,icon=$3,description=$4,active=$5,packages=$6 WHERE id=$7 RETURNING *',[value.name,value.slug,value.icon,value.description,value.active,JSON.stringify(value.packages),id])).rows[0];
+   const after=auditServiceState(updated);
+   if(JSON.stringify(before)!==JSON.stringify(after)){
+    await insertAdminAuditLog(client,req.admin.adminId,'service.updated','service',id,before,after);
+   }
+   return updated;
+  });
+  return res.json(publicService(row));
+ }catch(error){
+  return sendAdminMutationError(res,error,'Service ပြင်ဆင်၍မရပါ။','Slug ထပ်နေခြင်း ဖြစ်နိုင်ပါသည်။');
+ }
+});
+app.delete('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{
  const id=Number(req.params.id);
  if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Service ID မမှန်ပါ။'});
  try{
-  const r=await pool.query('UPDATE services SET name=$1,slug=$2,icon=$3,description=$4,active=$5,packages=$6 WHERE id=$7 RETURNING *',[s.name,s.slug,s.icon,s.description,s.active,JSON.stringify(s.packages),id]);
-  if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});
-  res.json(publicService(r.rows[0]));
- }catch{
-  res.status(409).json({error:'Update မအောင်မြင်ပါ။ Slug ထပ်နေခြင်း ဖြစ်နိုင်ပါသည်။'});
+  const result=await runAdminTransaction(async client=>{
+   const current=(await client.query('SELECT * FROM services WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!current)throw adminMutationError(404,'Service မတွေ့ပါ။');
+   if(!current.active)return {unchanged:true};
+   const updated=(await client.query('UPDATE services SET active=false WHERE id=$1 RETURNING *',[id])).rows[0];
+   await insertAdminAuditLog(client,req.admin.adminId,'service.disabled','service',id,auditServiceState(current),auditServiceState(updated));
+   return {unchanged:false};
+  });
+  return res.json({ok:true,...result});
+ }catch(error){
+  return sendAdminMutationError(res,error,'Service ပိတ်၍မရပါ။','Service ပိတ်၍မရပါ။');
  }
 });
-app.delete('/api/admin/services/:id',requireAdmin,sameOrigin,async(req,res)=>{try{const r=await pool.query('UPDATE services SET active=false WHERE id=$1 RETURNING id',[req.params.id]);if(!r.rows[0])return res.status(404).json({error:'Service မတွေ့ပါ။'});res.json({ok:true});}catch{res.status(500).json({error:'Service ပိတ်၍မရပါ။'});}});
 
 app.get('/api/admin/payment-accounts',requireAdmin,async(req,res)=>{try{res.json((await pool.query('SELECT id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at FROM payment_accounts ORDER BY display_order,id')).rows);}catch{res.status(500).json({error:'Payment account စာရင်း ရယူ၍မရပါ။'});}});
-app.post('/api/admin/payment-accounts',requireAdmin,sameOrigin,async(req,res)=>{const validation=validatePaymentAccountInput(req.body);if(!validation.ok)return res.status(400).json({error:validation.error});const a=validation.value;try{const result=await pool.query('INSERT INTO payment_accounts(method,account_name,account_number,instructions,active,display_order) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[a.method,a.accountName,a.accountNumber,a.instructions,a.active,a.displayOrder]);res.status(201).json(result.rows[0]);}catch(e){if(e.code==='23505')return res.status(409).json({error:'ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။'});res.status(500).json({error:'Payment account သိမ်းဆည်း၍မရပါ။'});}});
-app.put('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});const validation=validatePaymentAccountInput(req.body);if(!validation.ok)return res.status(400).json({error:validation.error});const a=validation.value;try{const result=await pool.query('UPDATE payment_accounts SET method=$1,account_name=$2,account_number=$3,instructions=$4,active=$5,display_order=$6,updated_at=now() WHERE id=$7 RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[a.method,a.accountName,a.accountNumber,a.instructions,a.active,a.displayOrder,id]);if(!result.rows[0])return res.status(404).json({error:'Payment account မတွေ့ပါ။'});res.json(result.rows[0]);}catch(e){if(e.code==='23505')return res.status(409).json({error:'ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။'});res.status(500).json({error:'Payment account ပြင်ဆင်၍မရပါ။'});}});
-app.delete('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});try{const result=await pool.query('UPDATE payment_accounts SET active=false,updated_at=now() WHERE id=$1 RETURNING id',[id]);if(!result.rows[0])return res.status(404).json({error:'Payment account မတွေ့ပါ။'});res.json({ok:true});}catch{res.status(500).json({error:'Payment account ပိတ်၍မရပါ။'});}});
+
+app.post('/api/admin/payment-accounts',requireAdmin,sameOrigin,async(req,res)=>{
+ const validation=validatePaymentAccountInput(req.body);
+ if(!validation.ok)return res.status(400).json({error:validation.error});
+ const value=validation.value;
+ try{
+  const row=await runAdminTransaction(async client=>{
+   const result=await client.query('INSERT INTO payment_accounts(method,account_name,account_number,instructions,active,display_order) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[value.method,value.accountName,value.accountNumber,value.instructions,value.active,value.displayOrder]);
+   const created=result.rows[0];
+   await insertAdminAuditLog(client,req.admin.adminId,'payment_account.created','payment_account',created.id,{},auditPaymentAccountState(created));
+   return created;
+  });
+  return res.status(201).json(row);
+ }catch(error){
+  return sendAdminMutationError(res,error,'Payment account သိမ်းဆည်း၍မရပါ။','ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။');
+ }
+});
+app.put('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});
+ const validation=validatePaymentAccountInput(req.body);
+ if(!validation.ok)return res.status(400).json({error:validation.error});
+ const value=validation.value;
+ try{
+  const row=await runAdminTransaction(async client=>{
+   const current=(await client.query('SELECT id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at FROM payment_accounts WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!current)throw adminMutationError(404,'Payment account မတွေ့ပါ။');
+   const changed=current.method!==value.method||current.account_name!==value.accountName||current.account_number!==value.accountNumber||current.instructions!==value.instructions||Boolean(current.active)!==value.active||Number(current.display_order)!==value.displayOrder;
+   if(!changed)return current;
+   const updated=(await client.query('UPDATE payment_accounts SET method=$1,account_name=$2,account_number=$3,instructions=$4,active=$5,display_order=$6,updated_at=now() WHERE id=$7 RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[value.method,value.accountName,value.accountNumber,value.instructions,value.active,value.displayOrder,id])).rows[0];
+   await insertAdminAuditLog(client,req.admin.adminId,'payment_account.updated','payment_account',id,auditPaymentAccountState(current),auditPaymentAccountState(updated));
+   return updated;
+  });
+  return res.json(row);
+ }catch(error){
+  return sendAdminMutationError(res,error,'Payment account ပြင်ဆင်၍မရပါ။','ဤ Payment Method အတွက် Active Account ရှိပြီးဖြစ်သည်၊ သို့မဟုတ် အကောင့်ကို ထည့်သွင်းပြီးဖြစ်ပါသည်။');
+ }
+});
+app.delete('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Payment account ID မမှန်ပါ။'});
+ try{
+  const result=await runAdminTransaction(async client=>{
+   const current=(await client.query('SELECT id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at FROM payment_accounts WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!current)throw adminMutationError(404,'Payment account မတွေ့ပါ။');
+   if(!current.active)return {unchanged:true};
+   const updated=(await client.query('UPDATE payment_accounts SET active=false,updated_at=now() WHERE id=$1 RETURNING id,method,account_name,account_number,instructions,active,display_order,created_at,updated_at',[id])).rows[0];
+   await insertAdminAuditLog(client,req.admin.adminId,'payment_account.disabled','payment_account',id,auditPaymentAccountState(current),auditPaymentAccountState(updated));
+   return {unchanged:false};
+  });
+  return res.json({ok:true,...result});
+ }catch(error){
+  return sendAdminMutationError(res,error,'Payment account ပိတ်၍မရပါ။','Payment account ပိတ်၍မရပါ။');
+ }
+});
 
 // Customer orders and manual payment review
 async function ensureOrderTables(){
@@ -160,15 +286,21 @@ async function ensureOrderTables(){
  CREATE TABLE IF NOT EXISTS admin_audit_logs(
   id BIGSERIAL PRIMARY KEY,
   admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-  action TEXT NOT NULL CHECK(action IN ('order.status_changed','payment.reviewed')),
-  entity_type TEXT NOT NULL CHECK(entity_type IN ('order','payment')),
+  action TEXT NOT NULL CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled')),
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('order','payment','service','payment_account')),
   entity_id TEXT NOT NULL CHECK(char_length(entity_id) BETWEEN 1 AND 64),
   before_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   after_state JSONB NOT NULL DEFAULT '{}'::jsonb,
   note TEXT NOT NULL DEFAULT '' CHECK(char_length(note)<=500),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment'))
+  CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'))
  );
+ ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_action_check;
+ ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_entity_type_check;
+ ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS admin_audit_logs_check;
+ ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled'));
+ ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account'));
+ ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'));
  CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(id DESC);
  CREATE INDEX IF NOT EXISTS admin_audit_logs_entity_idx ON admin_audit_logs(entity_type,entity_id,id DESC);
 `);
