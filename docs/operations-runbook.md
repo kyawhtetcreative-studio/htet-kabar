@@ -2,7 +2,7 @@
 
 This runbook documents safe deployment, database, backup, and recovery procedures for the existing HTET KABAR Render stack. It contains no credentials or customer/payment records.
 
-## Existing Render stack (verified 2026-11-27)
+## Existing Render stack (verified 2026-11-28)
 
 - Web service: `htet-kabar`, Node runtime, Oregon, Free plan.
 - Database: `htet_kabar_db`, PostgreSQL 18, Oregon, Free plan.
@@ -76,7 +76,7 @@ npm run check
 npm test
 ```
 
-The latest observed GitHub Actions run for PR #1 (run #103, 2026-11-28) completed successfully on the PR head: `npm ci`, `npm run check`, and `npm test` passed; the test log reports **83 passed, 0 failed, 0 skipped**. The workflow starts an ephemeral PostgreSQL 16 service and runs the integration test only against the dedicated local `htet_kabar_test` database; this does not verify connectivity to the Render production database. Run #103 was triggered by a documentation-only commit, so no application code changed in that run.
+The latest verified GitHub Actions run before this milestone was run #103 on 2026-11-28: `npm ci`, `npm run check`, and `npm test` passed with **83 passed, 0 failed, 0 skipped**. This milestone adds PostgreSQL integration coverage for service and payment-account audit entries; the new branch commits still require a fresh CI run. The workflow starts an ephemeral PostgreSQL 16 service and never connects to the Render production database.
 
 ## Backup and recovery
 
@@ -95,6 +95,13 @@ Requirements and safeguards:
 6. Record the backup timestamp, archive checksum, and restore-test result without recording credentials or customer data.
 
 The current Free PostgreSQL plan does not provide a durable production backup/retention guarantee and expires on 2026-12-21. Upgrade or migrate to a suitable paid database and verify backup retention before storing live customer, order, payment, or receipt data. No live backup or restore rehearsal is claimed by this runbook.
+
+## Catalog and payment-account audit history
+
+- Admin service create/update/deactivate and payment-account create/update/deactivate operations are recorded in `admin_audit_logs` in the same database transaction as the underlying change.
+- The audit snapshot stores service/package names and prices. Payment-account snapshots store only the last four characters of the account number; they never store the full receiving account number.
+- The application upgrades the audit CHECK constraints idempotently at startup. For manually managed SQL environments, apply `database/migrations/006_catalog_and_payment_account_audit.sql` after migration 005.
+- Repeated no-op updates/deactivations do not create duplicate audit entries. Audit insert failures roll back the associated admin change.
 
 ## Payment and order safety
 
