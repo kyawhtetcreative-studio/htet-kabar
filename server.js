@@ -79,7 +79,7 @@ function auditServiceState(row){
 }
 function auditPaymentAccountState(row){
  if(!row)return {};
- const compact=String(row.account_number||'').replace(/\\s+/g,'');
+ const compact=String(row.account_number||'').replace(/\s+/g,'');
  return {
   method:row.method,account_name:row.account_name,
   account_number_last4:compact.length>=4?compact.slice(-4):'***',
