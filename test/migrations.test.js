@@ -117,6 +117,18 @@ test('a failed migration rolls back and releases its advisory lock', async () =>
     assert.equal(fake.released, true);
   });
 });
+test('pending migrations must extend the applied ledger without version gaps', async () => {
+  await withDirectory(async directory => {
+    writeMigration(directory, '001_first.sql', 'SELECT 1;');
+    writeMigration(directory, '003_third.sql', 'SELECT 3;');
+    const fake = createFakePool();
+    fake.records.set(1, { version: 1, filename: '001_first.sql', checksum: 'a'.repeat(64) });
+    await assert.rejects(runMigrations(fake.pool, { directory, lockId: 12345 }), /Pending migration sequence gap: expected version 002, found 003/);
+    assert.equal(fake.unlocked, true);
+    assert.equal(fake.released, true);
+  });
+});
+
 test('an applied migration whose source file is missing stops startup', async () => {
   await withDirectory(async directory => {
     writeMigration(directory, '002_present.sql', 'SELECT 2;');
