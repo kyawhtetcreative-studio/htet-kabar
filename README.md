@@ -83,6 +83,7 @@ Manual alternative:
 ## Database migrations
 
 - The server applies the numbered SQL files in database/migrations before opening its HTTP listener. Startup fails closed if a migration fails.
+- Numbered SQL migrations are the sole source of runtime schema DDL: startup verifies/applies them before seeding initial services and the optional first admin; application startup does not create or alter tables independently.
 - PostgreSQL table schema_migrations records each numeric version, immutable filename, SHA-256 checksum, and application timestamp.
 - A PostgreSQL session advisory lock prevents concurrent server instances or CLI runs from applying the same migration at the same time. Each migration and its ledger record commit in one transaction.
 - Existing databases without a migration ledger are reconciled by the idempotent migrations 001–006; existing rows are not intentionally deleted or truncated.

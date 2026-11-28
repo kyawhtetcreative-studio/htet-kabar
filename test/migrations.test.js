@@ -139,3 +139,15 @@ test('an applied migration whose source file is missing stops startup', async ()
     assert.equal(fake.released, true);
   });
 });
+
+test('server delegates runtime schema DDL to numbered migrations before seeding and listening', () => {
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.doesNotMatch(serverSource, /\\b(?:CREATE|ALTER|DROP)\\s+TABLE\\b/i);
+  const startup = serverSource.slice(serverSource.lastIndexOf("app.get('*'"));
+  const migrationIndex = startup.indexOf('runMigrations(pool)');
+  const seedIndex = startup.indexOf('.then(()=>seedInitialData())');
+  const listenIndex = startup.indexOf('.then(()=>app.listen(PORT');
+  assert.ok(migrationIndex >= 0, 'startup must run the migration runner');
+  assert.ok(seedIndex > migrationIndex, 'initial data must be seeded after migrations');
+  assert.ok(listenIndex > seedIndex, 'HTTP listener must open after migration and seeding');
+});

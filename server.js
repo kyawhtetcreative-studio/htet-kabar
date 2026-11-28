@@ -43,24 +43,18 @@ const seed=[
 {name:'Boost Service',slug:'boost-service',icon:'◎',description:'Social media post promotion နှင့် boost စီမံမှု။',packages:[{name:'Promotion Setup',price:15000,description:'Setup ဝန်ဆောင်ခ (ကြော်ငြာဘတ်ဂျက် မပါ)'},{name:'Custom Boost',price:30000,description:'Custom promotion (ကြော်ငြာဘတ်ဂျက် မပါ)'}]},
 {name:'အခြား IT ဝန်ဆောင်မှု',slug:'other-it-services',icon:'⌘',description:'Computer၊ Software၊ Internet နှင့် နည်းပညာပြဿနာများ အကူအညီ။',packages:[{name:'IT Consultation',price:15000,description:'အခြေခံ IT အကြံပေးဝန်ဆောင်မှု'},{name:'Technical Support',price:30000,description:'နည်းပညာပြဿနာ စစ်ဆေး/ဖြေရှင်း'}]},
 {name:'Computer သင်တန်း',slug:'computer-training',icon:'▤',description:'Computer အခြေခံ၊ Graphic Design နှင့် Digital Skill သင်တန်းများ။',packages:[{name:'Basic Computer',price:50000,description:'သင်တန်းကြေး'},{name:'Graphic Design Starter',price:100000,description:'အခြေခံ Graphic Design သင်တန်း'}]}];
-async function initialize(){
+function validateRuntimeConfiguration(){
  if(!process.env.DATABASE_URL)throw Error('DATABASE_URL environment variable is required');
  if(!SECRET||SECRET.length<32)throw Error('JWT_SECRET must be set and at least 32 characters');
  if(process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length<12)throw Error('ADMIN_PASSWORD must be at least 12 characters');
- await pool.query(`CREATE TABLE IF NOT EXISTS admins(id SERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS services(id SERIAL PRIMARY KEY,name TEXT NOT NULL,slug TEXT UNIQUE NOT NULL,icon TEXT DEFAULT '✦',description TEXT NOT NULL,active BOOLEAN NOT NULL DEFAULT true,packages JSONB NOT NULL DEFAULT '[]',created_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS site_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,provider TEXT NOT NULL,provider_id TEXT NOT NULL,email TEXT,name TEXT,avatar_url TEXT,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),last_login_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(provider,provider_id));
- CREATE TABLE IF NOT EXISTS payment_accounts(
- id SERIAL PRIMARY KEY, method TEXT NOT NULL CHECK (method IN ('KBZPay','UAB Pay','AYA Bank')),
- account_name TEXT NOT NULL, account_number TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '',
- active BOOLEAN NOT NULL DEFAULT true, display_order INTEGER NOT NULL DEFAULT 0 CHECK (display_order BETWEEN 0 AND 999),
- created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(method,account_number));
- CREATE INDEX IF NOT EXISTS payment_accounts_active_order_idx ON payment_accounts(active,display_order,id);
- CREATE UNIQUE INDEX IF NOT EXISTS payment_accounts_one_active_method_uidx ON payment_accounts(method) WHERE active=true;`);
+}
+async function seedInitialData(){
  const n=Number((await pool.query('SELECT COUNT(*) FROM services')).rows[0].count);
  if(!n)for(const s of seed)await pool.query('INSERT INTO services(name,slug,icon,description,packages) VALUES($1,$2,$3,$4,$5)',[s.name,s.slug,s.icon,s.description,JSON.stringify(s.packages)]);
- if(process.env.ADMIN_EMAIL&&process.env.ADMIN_PASSWORD){const hash=await bcrypt.hash(process.env.ADMIN_PASSWORD,12);await pool.query('INSERT INTO admins(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING',[process.env.ADMIN_EMAIL.toLowerCase(),hash]);}
+ if(process.env.ADMIN_EMAIL&&process.env.ADMIN_PASSWORD){
+  const hash=await bcrypt.hash(process.env.ADMIN_PASSWORD,12);
+  await pool.query('INSERT INTO admins(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING',[process.env.ADMIN_EMAIL.toLowerCase(),hash]);
+ }
 }
 app.get('/api/site-settings',async(req,res)=>{try{const rows=(await pool.query("SELECT key,value FROM site_settings WHERE key IN ('brand_name','logo_url','announcement','post_title','post_body','post_image_url')")).rows;res.json(Object.fromEntries(rows.map(x=>[x.key,x.value])));}catch{res.json({});}});
 app.get('/api/admin/site-settings',requireAdmin,async(req,res)=>{try{const rows=(await pool.query('SELECT key,value FROM site_settings')).rows;res.json(Object.fromEntries(rows.map(x=>[x.key,x.value])));}catch{res.status(500).json({error:'Site settings မရပါ။'});}});
@@ -267,60 +261,6 @@ app.delete('/api/admin/payment-accounts/:id',requireAdmin,sameOrigin,async(req,r
 });
 
 // Customer orders and manual payment review
-async function ensureOrderTables(){
- await pool.query(`CREATE TABLE IF NOT EXISTS orders(
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(), order_code TEXT UNIQUE NOT NULL,
- customer_name TEXT NOT NULL, phone TEXT NOT NULL, contact TEXT, service_id INTEGER REFERENCES services(id),
- service_name TEXT NOT NULL, package_name TEXT NOT NULL, price NUMERIC(12,2) NOT NULL,
- brief TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
- payment_status TEXT NOT NULL DEFAULT 'unpaid', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
- CREATE TABLE IF NOT EXISTS payments(
- id SERIAL PRIMARY KEY, order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
- method TEXT NOT NULL, reference TEXT NOT NULL, amount NUMERIC(12,2) NOT NULL,
- paid_date DATE, paid_time TIME, reference_last6 TEXT, status TEXT NOT NULL DEFAULT 'pending', admin_note TEXT, submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(), reviewed_at TIMESTAMPTZ);
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_date DATE;
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid_time TIME;
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS reference_last6 TEXT;
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_mime_type TEXT;
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_data BYTEA;
- ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_size INTEGER;
- CREATE TABLE IF NOT EXISTS admin_audit_logs(
-  id BIGSERIAL PRIMARY KEY,
-  admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
-  action TEXT NOT NULL CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled')),
-  entity_type TEXT NOT NULL CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account')),
-  entity_id TEXT NOT NULL CHECK(char_length(entity_id) BETWEEN 1 AND 64),
-  before_state JSONB NOT NULL DEFAULT '{}'::jsonb,
-  after_state JSONB NOT NULL DEFAULT '{}'::jsonb,
-  note TEXT NOT NULL DEFAULT '' CHECK(char_length(note)<=500),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'))
- );
- DO $$
- BEGIN
-  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_action_check' AND position('service.created' in pg_get_constraintdef(oid))=0) THEN
-   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_action_check;
-  END IF;
-  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_action_check') THEN
-   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_action_check CHECK(action IN ('order.status_changed','payment.reviewed','service.created','service.updated','service.disabled','payment_account.created','payment_account.updated','payment_account.disabled'));
-  END IF;
-  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_type_check' AND position('payment_account' in pg_get_constraintdef(oid))=0) THEN
-   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_entity_type_check;
-  END IF;
-  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_type_check') THEN
-   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_type_check CHECK(entity_type IN ('order','payment','service','payment_account'));
-  END IF;
-  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_check' AND position('service.%' in pg_get_constraintdef(oid))=0) THEN
-   ALTER TABLE admin_audit_logs DROP CONSTRAINT admin_audit_logs_check;
-  END IF;
-  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='admin_audit_logs'::regclass AND conname='admin_audit_logs_entity_action_check') THEN
-   ALTER TABLE admin_audit_logs ADD CONSTRAINT admin_audit_logs_entity_action_check CHECK((action='order.status_changed' AND entity_type='order') OR (action='payment.reviewed' AND entity_type='payment') OR (action LIKE 'service.%' AND entity_type='service') OR (action LIKE 'payment_account.%' AND entity_type='payment_account'));
-  END IF;
- END $$;
- CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(id DESC);
- CREATE INDEX IF NOT EXISTS admin_audit_logs_entity_idx ON admin_audit_logs(entity_type,entity_id,id DESC);
-`);
-}
 function validText(v,max){return typeof v==='string'&&v.trim().length>0&&v.trim().length<=max;}
 app.post('/api/orders',rateLimit({windowMs:60*60*1000,limit:8,standardHeaders:true,legacyHeaders:false}),sameOrigin,async(req,res)=>{
  const b=req.body||{};if(!validText(b.customerName,120)||!validText(b.phone,40)||!validText(b.serviceName,160)||!validText(b.packageName,160)||!validText(b.brief,3000))return res.status(400).json({error:'အမည်၊ ဖုန်း၊ ဝန်ဆောင်မှု၊ package နှင့် လိုအပ်ချက်ကို ဖြည့်ပါ။'});
@@ -434,3 +374,17 @@ app.patch('/api/admin/payments/:id/review',requireAdmin,sameOrigin,async(req,res
 
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
 if(!process.env.DATABASE_URL||!SECRET||SECRET.length<32){console.error('Startup failed: DATABASE_URL and JWT_SECRET must be configured.');process.exit(1);}else{initialize().then(()=>ensureOrderTables()).then(()=>runMigrations(pool)).then(result=>{if(result.applied.length)console.log('Applied database migrations: '+result.applied.join(', '));console.log('Database migrations verified ('+result.applied.length+' applied, '+result.skipped.length+' already applied).');}).then(()=>app.listen(PORT,()=>console.log('HTET KABAR API listening on '+PORT))).catch(e=>{console.error('Startup failed:',e.message);process.exit(1);});}
+try{
+ validateRuntimeConfiguration();
+ runMigrations(pool)
+  .then(result=>{
+   if(result.applied.length)console.log('Applied database migrations: '+result.applied.join(', '));
+   console.log('Database migrations verified ('+result.applied.length+' applied, '+result.skipped.length+' already applied).');
+  })
+  .then(()=>seedInitialData())
+  .then(()=>app.listen(PORT,()=>console.log('HTET KABAR API listening on '+PORT)))
+  .catch(error=>{console.error('Startup failed:',error.message);process.exit(1);});
+}catch(error){
+ console.error('Startup failed:',error.message);
+ process.exit(1);
+}
