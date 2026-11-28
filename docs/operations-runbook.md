@@ -76,7 +76,7 @@ npm run check
 npm test
 ```
 
-The latest observed GitHub Actions run for PR #1 (run #98, 2026-11-27) completed successfully on the current PR head. The workflow starts an ephemeral PostgreSQL 16 service and runs the integration test only against the dedicated local `htet_kabar_test` database; this does not verify connectivity to the Render production database.
+The latest observed GitHub Actions run for PR #1 (run #103, 2026-11-28) completed successfully on the PR head: `npm ci`, `npm run check`, and `npm test` passed; the test log reports **83 passed, 0 failed, 0 skipped**. The workflow starts an ephemeral PostgreSQL 16 service and runs the integration test only against the dedicated local `htet_kabar_test` database; this does not verify connectivity to the Render production database. Run #103 was triggered by a documentation-only commit, so no application code changed in that run.
 
 ## Backup and recovery
 
@@ -121,4 +121,4 @@ Before a production release:
 
 ## AI agent integration status
 
-Gemini AI and n8n integration, agent permissions, tool execution, and the Admin AI Control Center are **planned, not implemented or verified** in this run. Implement them only after the backend/database and release foundations are stable. Require explicit admin approval for payments, refunds, credential changes, destructive database actions, and production deployments.
+Gemini AI and n8n integration, agent permissions, tool execution, and the Admin AI Control Center are **planned, not implemented or verified** in this run. The proposed security boundaries, task lifecycle, data model, API surface, and rollout sequence are documented in `docs/ai-agent-architecture.md`; that file is a design proposal only. Implement agents only after the backend/database and release foundations are stable. Require explicit admin approval for payments, refunds, credential changes, destructive database actions, and production deployments.
