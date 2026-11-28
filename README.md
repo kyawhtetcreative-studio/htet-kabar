@@ -93,9 +93,10 @@ Manual alternative:
 
 ## Admin audit trail
 - Admin payment approvals/rejections and order-status changes are written to `admin_audit_logs` in the same PostgreSQL transaction as the state change. If the audit insert fails, the state change rolls back too.
-- Each entry records the admin ID, action, entity type/ID, previous and resulting state, optional review note, and timestamp. It deliberately excludes customer phone numbers, transaction references, receipt bytes, cookies, and tokens.
+- Service create/update/deactivate and payment-account create/update/deactivate operations are also recorded in the same transaction as the data change. Repeated no-op updates/deactivations do not create duplicate entries.
+- Each entry records the admin ID, action, entity type/ID, previous and resulting state, optional review note, and timestamp. Service snapshots include the public catalog fields and package names/prices. Payment-account snapshots include only the last four account-number characters; the full receiving account number is never copied into audit JSON. Customer phone numbers, transaction references, receipt bytes, cookies, passwords, and tokens are excluded.
 - The append-only feed is available only to authenticated admins at `GET /api/admin/audit-logs?limit=50`; the limit is bounded to 1–100 and responses are private/no-store.
-- Existing databases create the table idempotently at application startup. For manually-managed SQL installations, run `database/migrations/005_admin_audit_logs.sql` after migrations 001–004.
+- Existing databases create/upgrade the table constraints idempotently at application startup. For manually-managed SQL installations, run `database/migrations/005_admin_audit_logs.sql` after migrations 001–004, then `database/migrations/006_catalog_and_payment_account_audit.sql`.
 
 ## Payment receipt storage
 - Receipt images are optional and limited to 1MB in PNG, JPEG, or WebP format. Server-side validation checks canonical base64 and the matching file signature before writing the image to PostgreSQL `BYTEA` columns.
@@ -143,7 +144,7 @@ Remove-Item Env:ALLOW_DATABASE_RESTORE
 - Deployment smoke test, live domain verification, backup/restore rehearsal, and production security review are still required.
 
 ## Supabase setup (optional alternative)
-1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, `database/migrations/003_payment_accounts.sql`, `database/migrations/004_payment_receipts.sql`, then `database/migrations/005_admin_audit_logs.sql`. These migrations add the admin, payment integrity, payment account, and optional receipt-storage structures without deleting or truncating existing orders, payments, customers, or services. The payment integrity migration prevents an order from having more than one pending payment record.
+1. In Supabase, open SQL Editor and run `database/migrations/001_admin_auth.sql`, `database/migrations/002_payment_integrity.sql`, `database/migrations/003_payment_accounts.sql`, `database/migrations/004_payment_receipts.sql`, then `database/migrations/005_admin_audit_logs.sql`, then `database/migrations/006_catalog_and_payment_account_audit.sql`. These migrations add the admin, payment integrity, payment account, and optional receipt-storage structures without deleting or truncating existing orders, payments, customers, or services. The payment integrity migration prevents an order from having more than one pending payment record.
 2. In the hosting provider, set `DATABASE_URL` to the Supabase PostgreSQL connection string. Supabase/direct or pooler URLs that use SSL are supported.
 3. Set a random `JWT_SECRET` with at least 32 characters.
 4. Set `NODE_ENV=production`.
