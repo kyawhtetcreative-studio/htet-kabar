@@ -119,6 +119,7 @@ test('a failed migration rolls back and releases its advisory lock', async () =>
 });
 test('an applied migration whose source file is missing stops startup', async () => {
   await withDirectory(async directory => {
+    writeMigration(directory, '002_present.sql', 'SELECT 2;');
     const fake = createFakePool();
     fake.records.set(1, { version: 1, filename: '001_removed.sql', checksum: 'a'.repeat(64) });
     await assert.rejects(runMigrations(fake.pool, { directory, lockId: 12345 }), /Applied migration file is missing/);
