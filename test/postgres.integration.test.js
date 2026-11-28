@@ -221,7 +221,7 @@ test('PostgreSQL order and manual payment workflow', {
 
     const currentAccounts = await api('/api/payment-accounts');
     const auditMethod = ['KBZPay', 'UAB Pay', 'AYA Bank'].find(candidate =>
-      !currentAccounts.data.some(account => account.method === candidate && account.active)
+      !currentAccounts.data.some(account => account.method === candidate)
     );
     assert.ok(auditMethod, 'The isolated integration database should have an unused active payment method.');
     const auditAccountNumber = 'AUDIT-' + suffix;
