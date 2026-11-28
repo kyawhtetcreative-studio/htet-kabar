@@ -57,6 +57,7 @@ test('PostgreSQL order and manual payment workflow', {
   const orderCodes = [];
   let serviceId = null;
   let createdAccountId = null;
+  let auditAccountId = null;
   let adminId = null;
   let cookie = null;
   let output = '';
@@ -174,6 +175,24 @@ test('PostgreSQL order and manual payment workflow', {
     });
     assert.equal(service.response.status, 201, service.raw);
     serviceId = service.data.id;
+    let auditFeed = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const serviceCreatedEvent = auditFeed.data.find(item => item.action === 'service.created' && item.entity_id === String(serviceId));
+    assert.ok(serviceCreatedEvent, 'Creating a service should create an audit entry.');
+    assert.deepEqual(serviceCreatedEvent.before_state, {});
+    assert.equal(serviceCreatedEvent.after_state.name, servicePayload.name);
+    assert.equal(serviceCreatedEvent.admin_id, adminId);
+
+    const updatedServicePayload = { ...servicePayload, description: 'Updated description for audit coverage.' };
+    const serviceUpdate = await api('/api/admin/services/' + serviceId, {
+      method: 'PUT', cookie, body: updatedServicePayload
+    });
+    assert.equal(serviceUpdate.response.status, 200, serviceUpdate.raw);
+    auditFeed = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const serviceUpdatedEvent = auditFeed.data.find(item => item.action === 'service.updated' && item.entity_id === String(serviceId));
+    assert.ok(serviceUpdatedEvent, 'Updating a service should create an audit entry.');
+    assert.equal(serviceUpdatedEvent.before_state.description, servicePayload.description);
+    assert.equal(serviceUpdatedEvent.after_state.description, updatedServicePayload.description);
+
     const catalog = await api('/api/services');
     assert.equal(catalog.response.status, 200);
     assert.ok(catalog.data.some(item => item.id === serviceId));
@@ -199,6 +218,52 @@ test('PostgreSQL order and manual payment workflow', {
       method = account.data.method;
     }
     assert.ok(method);
+
+    const currentAccounts = await api('/api/payment-accounts');
+    const auditMethod = ['KBZPay', 'UAB Pay', 'AYA Bank'].find(candidate =>
+      !currentAccounts.data.some(account => account.method === candidate && account.active)
+    );
+    assert.ok(auditMethod, 'The isolated integration database should have an unused active payment method.');
+    const auditAccountNumber = 'AUDIT-' + suffix;
+    const auditAccount = await api('/api/admin/payment-accounts', {
+      method: 'POST', cookie,
+      body: {
+        method: auditMethod,
+        accountName: 'Audit Test Account',
+        accountNumber: auditAccountNumber,
+        instructions: 'Initial test instructions',
+        active: true,
+        displayOrder: 998
+      }
+    });
+    assert.equal(auditAccount.response.status, 201, auditAccount.raw);
+    auditAccountId = auditAccount.data.id;
+    auditFeed = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const accountCreatedEvent = auditFeed.data.find(item => item.action === 'payment_account.created' && item.entity_id === String(auditAccountId));
+    assert.ok(accountCreatedEvent, 'Creating a payment account should create an audit entry.');
+    assert.equal(accountCreatedEvent.after_state.account_number_last4, auditAccountNumber.slice(-4));
+    assert.equal(Object.hasOwn(accountCreatedEvent.after_state, 'account_number'), false);
+
+    const updatedAccountNumber = 'UPDATED-' + randomBytes(6).toString('hex');
+    const auditAccountUpdate = await api('/api/admin/payment-accounts/' + auditAccountId, {
+      method: 'PUT', cookie,
+      body: {
+        method: auditMethod,
+        accountName: 'Updated Audit Test Account',
+        accountNumber: updatedAccountNumber,
+        instructions: 'Updated test instructions',
+        active: true,
+        displayOrder: 997
+      }
+    });
+    assert.equal(auditAccountUpdate.response.status, 200, auditAccountUpdate.raw);
+    auditFeed = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const accountUpdatedEvent = auditFeed.data.find(item => item.action === 'payment_account.updated' && item.entity_id === String(auditAccountId));
+    assert.ok(accountUpdatedEvent, 'Updating a payment account should create an audit entry.');
+    assert.equal(accountUpdatedEvent.before_state.account_name, 'Audit Test Account');
+    assert.equal(accountUpdatedEvent.after_state.account_name, 'Updated Audit Test Account');
+    assert.equal(accountUpdatedEvent.after_state.account_number_last4, updatedAccountNumber.slice(-4));
+    assert.equal(Object.hasOwn(accountUpdatedEvent.after_state, 'account_number'), false);
 
     const order = await api('/api/orders', {
       method: 'POST',
@@ -360,6 +425,35 @@ test('PostgreSQL order and manual payment workflow', {
     });
     assert.equal(finalReject.response.status, 200, finalReject.raw);
 
+    const accountDisable = await api('/api/admin/payment-accounts/' + auditAccountId, {
+      method: 'DELETE', cookie
+    });
+    assert.equal(accountDisable.response.status, 200, accountDisable.raw);
+    const repeatedAccountDisable = await api('/api/admin/payment-accounts/' + auditAccountId, {
+      method: 'DELETE', cookie
+    });
+    assert.equal(repeatedAccountDisable.response.status, 200);
+    assert.equal(repeatedAccountDisable.data.unchanged, true);
+
+    const serviceDisable = await api('/api/admin/services/' + serviceId, {
+      method: 'DELETE', cookie
+    });
+    assert.equal(serviceDisable.response.status, 200, serviceDisable.raw);
+    const repeatedServiceDisable = await api('/api/admin/services/' + serviceId, {
+      method: 'DELETE', cookie
+    });
+    assert.equal(repeatedServiceDisable.response.status, 200);
+    assert.equal(repeatedServiceDisable.data.unchanged, true);
+
+    auditFeed = await api('/api/admin/audit-logs?limit=100', { cookie });
+    const accountDisabledEvent = auditFeed.data.find(item => item.action === 'payment_account.disabled' && item.entity_id === String(auditAccountId));
+    assert.ok(accountDisabledEvent, 'Disabling a payment account should create an audit entry.');
+    assert.equal(accountDisabledEvent.before_state.active, true);
+    assert.equal(accountDisabledEvent.after_state.active, false);
+    assert.equal(Object.hasOwn(accountDisabledEvent.after_state, 'account_number'), false);
+    const serviceDisabledEvents = auditFeed.data.filter(item => item.action === 'service.disabled' && item.entity_id === String(serviceId));
+    assert.equal(serviceDisabledEvents.length, 1, 'Repeated service deactivation should be idempotent.');
+
     const logout = await api('/api/admin/logout', { method: 'POST', cookie });
     assert.equal(logout.response.status, 200);
     assert.match(logout.response.headers.get('set-cookie') || '', /Max-Age=0/i);
@@ -370,6 +464,7 @@ test('PostgreSQL order and manual payment workflow', {
       if (orderCodes.length) await pool.query('DELETE FROM orders WHERE order_code = ANY($1::text[])', [orderCodes]);
       if (serviceId) await pool.query('DELETE FROM services WHERE id = $1', [serviceId]);
       if (createdAccountId) await pool.query('DELETE FROM payment_accounts WHERE id = $1', [createdAccountId]);
+      if (auditAccountId) await pool.query('DELETE FROM payment_accounts WHERE id = $1', [auditAccountId]);
       if (adminId) await pool.query('DELETE FROM admin_audit_logs WHERE admin_id = $1', [adminId]);
       await pool.query('DELETE FROM admins WHERE email = $1', [email]);
     } catch {
