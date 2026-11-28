@@ -142,8 +142,10 @@ test('an applied migration whose source file is missing stops startup', async ()
 
 test('server delegates runtime schema DDL to numbered migrations before seeding and listening', () => {
   const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.doesNotMatch(serverSource, /\\b(?:CREATE|ALTER|DROP)\\s+TABLE\\b/i);
+  assert.doesNotMatch(serverSource, /\b(?:CREATE|ALTER|DROP)\s+TABLE\b/i);
+  assert.doesNotMatch(serverSource, /\bensureOrderTables\b/);
   const startup = serverSource.slice(serverSource.lastIndexOf("app.get('*'"));
+  assert.ok(startup.indexOf('validateRuntimeConfiguration();') >= 0, 'runtime configuration must be validated before migrations');
   const migrationIndex = startup.indexOf('runMigrations(pool)');
   const seedIndex = startup.indexOf('.then(()=>seedInitialData())');
   const listenIndex = startup.indexOf('.then(()=>app.listen(PORT');
