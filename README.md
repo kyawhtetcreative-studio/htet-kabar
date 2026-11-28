@@ -87,7 +87,7 @@ Manual alternative:
 - A PostgreSQL session advisory lock prevents concurrent server instances or CLI runs from applying the same migration at the same time. Each migration and its ledger record commit in one transaction.
 - Existing databases without a migration ledger are reconciled by the idempotent migrations 001–006; existing rows are not intentionally deleted or truncated.
 - Run npm run db:migrate to apply pending migrations explicitly to the database in DATABASE_URL. Confirm the target database and take a verified backup before using this command against any live environment.
-- Never edit or rename an applied migration. Add the next numbered SQL file instead; a checksum mismatch stops startup and requires a new forward migration.
+- Never edit or rename an applied migration. Add the next contiguous three-digit SQL version (for example, 007_next_change.sql); missing or out-of-order versions stop startup. A checksum mismatch requires a new forward migration.
 - GitHub Actions verifies the runner against an isolated PostgreSQL test database. This does not apply migrations to the Render production database.
 
 ## Validation
